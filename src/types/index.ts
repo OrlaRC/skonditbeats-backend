@@ -2,12 +2,30 @@
 // Tipos compartidos — SkonditBeats API
 // ──────────────────────────────────────────────────────────────────────────────
 
-export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'MODERADOR' | 'CLIENTE';
+export type UserRole = 'ADMIN' | 'CLIENTE';
 
-export const ADMIN_ROLES: UserRole[] = ['SUPER_ADMIN', 'ADMIN'];
+export const ROLES_VALIDOS: UserRole[] = ['ADMIN', 'CLIENTE'];
+
+export const PERMISOS_DISPONIBLES: string[] = [
+  'user:view',
+  'user:create',
+  'user:update',
+  'user:delete',
+  'user:permissions',
+  'user:password',
+  'beat:view',
+  'beat:create',
+  'beat:update',
+  'beat:delete',
+  'order:view',
+  'message:view',
+  'audit:view'
+];
+
+export const ADMIN_ROLES: UserRole[] = ['ADMIN'];
 
 export function isAdminRole(rol: string): boolean {
-  return ADMIN_ROLES.includes(rol as UserRole);
+  return rol === 'ADMIN';
 }
 
 export interface User {

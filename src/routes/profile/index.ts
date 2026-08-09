@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import type { MultipartFile }   from '@fastify/multipart';
 import bcrypt                   from 'bcryptjs';
 import { supabase }             from '../../db/supabase';
+import { registrarAudit, ipDeRequest } from '../../plugins/audit';
+import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
 
 interface ProfileBody {
   nombre?:    string;
@@ -82,6 +83,11 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { password_actual, password_nueva } = request.body;
 
+    const errorPolitica = validarPoliticaPassword(password_nueva);
+    if (errorPolitica) {
+      return reply.code(400).send({ error: errorPolitica, politica: DESCRIPCION_POLITICA });
+    }
+
     const { data: user, error } = await supabase
       .from('users')
       .select('password')
@@ -105,45 +111,37 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
       .update({ password: newHash, updated_at: new Date().toISOString() })
       .eq('id', request.user.sub);
 
+    await registrarAudit(app, {
+      user_id: request.user.sub,
+      email:   request.user.email,
+      accion:  'CAMBIO_CONTRASENA',
+      detalle: 'El usuario cambió su propia contraseña',
+      ip:      ipDeRequest(request)
+    });
+
     return reply.send({ message: 'Contraseña actualizada correctamente' });
   });
 
 
   // ─── PUT /api/profile/foto ─────────────────────────────────────────────────
-  app.put('/foto', async (request, reply) => {
-    let fotoBuffer: Buffer | null = null;
-    let fotoMime  = '';
-    let fotoName  = '';
+  // Recibe la foto_url ya subida por el frontend a Supabase Storage
+  app.put<{ Body: { foto_url?: string } }>('/foto', async (request, reply) => {
+    const { foto_url } = request.body;
 
-    for await (const part of request.parts()) {
-      if (part.type !== 'field') {
-        const file = part as MultipartFile;
-        fotoBuffer = await file.toBuffer();
-        fotoMime   = file.mimetype;
-        fotoName   = `${request.user.sub}_${Date.now()}_${file.filename}`;
-      }
+    if (!foto_url) {
+      return reply.code(400).send({ error: 'foto_url es obligatoria' });
     }
 
-    if (!fotoBuffer) {
-      return reply.code(400).send({ error: 'No se recibió ningún archivo' });
-    }
-
-    const { error: uploadError } = await supabase.storage
-      .from('avatars')
-      .upload(fotoName, fotoBuffer, { contentType: fotoMime, upsert: true });
-
-    if (uploadError) {
-      app.log.error(uploadError);
-      return reply.code(500).send({ error: 'Error al subir la foto' });
-    }
-
-    const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(fotoName);
-
-    await supabase
+    const { error: updateError } = await supabase
       .from('users')
-      .update({ foto_url: urlData.publicUrl, updated_at: new Date().toISOString() })
+      .update({ foto_url, updated_at: new Date().toISOString() })
       .eq('id', request.user.sub);
 
-    return reply.send({ foto_url: urlData.publicUrl });
+    if (updateError) {
+      app.log.error(updateError);
+      return reply.code(500).send({ error: 'Error al guardar la foto' });
+    }
+
+    return reply.send({ foto_url });
   });
 }

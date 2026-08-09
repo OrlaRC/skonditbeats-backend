@@ -1,7 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { supabase }      from '../../db/supabase';
 import { isAdminRole }   from '../../types/index';
-import type { MultipartFile } from '@fastify/multipart';
 
 interface BeatsQuery {
   search?:     string;
@@ -12,46 +11,14 @@ interface BeatsQuery {
   precio_max?: string;
 }
 
-interface ParsedBeatUpload {
-  fields: Record<string, string>;
-  imagen?: { buffer: Buffer; mime: string; name: string };
-  audio?:  { buffer: Buffer; mime: string; name: string };
-}
-
-async function parseBeatMultipart(request: FastifyRequest): Promise<ParsedBeatUpload> {
-  const fields: Record<string, string> = {};
-  let imagen: ParsedBeatUpload['imagen'];
-  let audio:  ParsedBeatUpload['audio'];
-
-  for await (const part of request.parts()) {
-    if (part.type === 'field') {
-      fields[part.fieldname] = part.value as string;
-    } else {
-      const file   = part as MultipartFile;
-      const buffer = await file.toBuffer();
-      const entry  = { buffer, mime: file.mimetype, name: `${Date.now()}_${file.filename}` };
-      if (file.fieldname === 'imagen') imagen = entry;
-      if (file.fieldname === 'audio')  audio  = entry;
-    }
-  }
-
-  return { fields, imagen, audio };
-}
-
-async function uploadToStorage(
-  bucket: string,
-  name:   string,
-  buffer: Buffer,
-  mime:   string
-): Promise<string | null> {
-  const { error } = await supabase.storage
-    .from(bucket)
-    .upload(name, buffer, { contentType: mime, upsert: true });
-
-  if (error) return null;
-
-  const { data } = supabase.storage.from(bucket).getPublicUrl(name);
-  return data.publicUrl;
+interface BeatBody {
+  nombre:      string;
+  genero:      string;
+  bpm:         number;
+  precio:      number;
+  descripcion?: string;
+  imagen_url?:  string | null;
+  audio_url?:   string | null;
 }
 
 export async function beatsRoutes(app: FastifyInstance): Promise<void> {
@@ -102,30 +69,18 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
 
 
   // ─── POST /api/beats ───────────────────────────────────────────────────────
-  app.post('/', {
+  app.post<{ Body: BeatBody }>('/', {
     preHandler: [app.authenticate]
   }, async (request, reply) => {
     if (!isAdminRole(request.user.rol)) {
       return reply.code(403).send({ error: 'Acceso denegado' });
     }
 
-    const { fields, imagen, audio } = await parseBeatMultipart(request);
-    const { nombre, genero, bpm, precio, descripcion } = fields;
+    const { nombre, genero, bpm, precio, descripcion, imagen_url, audio_url } = request.body;
 
-    if (!nombre || !genero || !bpm || !precio) {
+    if (!nombre || !genero || bpm === undefined || precio === undefined) {
       return reply.code(400).send({ error: 'nombre, genero, bpm y precio son obligatorios' });
     }
-
-    const imagen_url = imagen
-      ? await uploadToStorage('beats-images', `img_${imagen.name}`, imagen.buffer, imagen.mime)
-      : null;
-
-    const audio_url = audio
-      ? await uploadToStorage('beats-audio', `audio_${audio.name}`, audio.buffer, audio.mime)
-      : null;
-
-    if (imagen && !imagen_url) return reply.code(500).send({ error: 'Error al subir la imagen' });
-    if (audio  && !audio_url)  return reply.code(500).send({ error: 'Error al subir el audio'  });
 
     const { data: beat, error } = await supabase
       .from('beats')
@@ -135,8 +90,8 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
         bpm:         Number(bpm),
         precio:      Number(precio),
         descripcion: descripcion ?? null,
-        imagen_url,
-        audio_url
+        imagen_url:  imagen_url  ?? null,
+        audio_url:   audio_url   ?? null
       })
       .select()
       .single();
@@ -151,7 +106,7 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
 
 
   // ─── PUT /api/beats/:id ────────────────────────────────────────────────────
-  app.put<{ Params: { id: string } }>('/:id', {
+  app.put<{ Params: { id: string }; Body: BeatBody }>('/:id', {
     preHandler: [app.authenticate]
   }, async (request, reply) => {
     if (!isAdminRole(request.user.rol)) {
@@ -164,26 +119,10 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
       .eq('id', request.params.id)
       .single();
 
-    const { fields, imagen, audio } = await parseBeatMultipart(request);
-    const { nombre, genero, bpm, precio, descripcion } = fields;
+    const { nombre, genero, bpm, precio, descripcion, imagen_url, audio_url } = request.body;
 
-    if (!nombre || !genero || !bpm || !precio) {
+    if (!nombre || !genero || bpm === undefined || precio === undefined) {
       return reply.code(400).send({ error: 'nombre, genero, bpm y precio son obligatorios' });
-    }
-
-    let imagen_url = beatActual?.imagen_url ?? null;
-    let audio_url  = beatActual?.audio_url  ?? null;
-
-    if (imagen) {
-      const url = await uploadToStorage('beats-images', `img_${imagen.name}`, imagen.buffer, imagen.mime);
-      if (!url) return reply.code(500).send({ error: 'Error al subir la imagen' });
-      imagen_url = url;
-    }
-
-    if (audio) {
-      const url = await uploadToStorage('beats-audio', `audio_${audio.name}`, audio.buffer, audio.mime);
-      if (!url) return reply.code(500).send({ error: 'Error al subir el audio' });
-      audio_url = url;
     }
 
     const { data: beat, error } = await supabase
@@ -194,8 +133,8 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
         bpm:         Number(bpm),
         precio:      Number(precio),
         descripcion: descripcion ?? null,
-        imagen_url,
-        audio_url,
+        imagen_url:  imagen_url  ?? beatActual?.imagen_url ?? null,
+        audio_url:   audio_url   ?? beatActual?.audio_url  ?? null,
         updated_at:  new Date().toISOString()
       })
       .eq('id', request.params.id)

@@ -3,7 +3,12 @@ import bcrypt                    from 'bcryptjs';
 import { OAuth2Client }          from 'google-auth-library';
 import { supabase }              from '../../db/supabase';
 import { sendOtpEmail }          from '../../plugins/email';
+import { registrarAudit, ipDeRequest } from '../../plugins/audit';
+import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
 import type { JwtPayload }       from '../../types/index';
+
+const MAX_INTENTOS      = 5;
+const TIEMPO_BLOQUEO_MS = 15 * 60 * 1000; // 15 minutos
 
 interface RegisterBody {
   email:      string;
@@ -57,6 +62,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { email, password, nombre, username, direccion, telefono, edad } = request.body;
 
+    const errorPolitica = validarPoliticaPassword(password);
+    if (errorPolitica) {
+      return reply.code(400).send({ error: errorPolitica, politica: DESCRIPCION_POLITICA });
+    }
+
     const { data: existing } = await supabase
       .from('users')
       .select('id')
@@ -90,6 +100,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(500).send({ error: 'Error al crear el usuario' });
     }
 
+    await registrarAudit(app, {
+      user_id: user.id,
+      email:   user.email,
+      accion:  'ALTA_USUARIO',
+      detalle: `Registro de ${user.nombre} (${user.email}) con rol ${user.rol}`,
+      ip:      ipDeRequest(request)
+    });
+
     const payload: JwtPayload = {
       sub:   user.id,
       email: user.email,
@@ -115,15 +133,33 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
   }, async (request, reply) => {
     const { email, password } = request.body;
+    const emailNormalizado   = email.toLowerCase().trim();
 
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, email, nombre, username, rol, password, foto_url, activo')
-      .eq('email', email.toLowerCase().trim())
+      .select('id, email, nombre, username, rol, password, foto_url, activo, intentos_fallidos, bloqueado_hasta')
+      .eq('email', emailNormalizado)
       .maybeSingle();
 
     if (error || !user) {
+      await registrarAudit(app, {
+        user_id: null,
+        email:   emailNormalizado,
+        accion:  'LOGIN_FALLIDO',
+        detalle: 'Intento de inicio de sesión con email no registrado',
+        ip:      ipDeRequest(request)
+      });
       return reply.code(401).send({ error: 'Credenciales inválidas' });
+    }
+
+    // ── Bloqueo temporal ─────────────────────────────────────────────────────
+    if (user.bloqueado_hasta && new Date(user.bloqueado_hasta).getTime() > Date.now()) {
+      const minutosRestantes = Math.ceil(
+        (new Date(user.bloqueado_hasta).getTime() - Date.now()) / 60000
+      );
+      return reply.code(423).send({
+        error: `Cuenta temporalmente bloqueada por demasiados intentos. Intenta en ${minutosRestantes} minuto(s).`
+      });
     }
 
     if (!user.activo) {
@@ -131,8 +167,41 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const valid = await bcrypt.compare(password, user.password);
+
     if (!valid) {
+      const nuevosIntentos = (user.intentos_fallidos ?? 0) + 1;
+      const update: Record<string, unknown> = { intentos_fallidos: nuevosIntentos };
+
+      if (nuevosIntentos >= MAX_INTENTOS) {
+        update.intentos_fallidos = 0;
+        update.bloqueado_hasta   = new Date(Date.now() + TIEMPO_BLOQUEO_MS).toISOString();
+      }
+
+      await supabase.from('users').update(update).eq('id', user.id);
+
+      await registrarAudit(app, {
+        user_id: user.id,
+        email:   user.email,
+        accion:  'LOGIN_FALLIDO',
+        detalle: `Contraseña incorrecta (intento ${nuevosIntentos} de ${MAX_INTENTOS})`,
+        ip:      ipDeRequest(request)
+      });
+
+      if (nuevosIntentos >= MAX_INTENTOS) {
+        return reply.code(423).send({
+          error: 'Demasiados intentos fallidos. Cuenta bloqueada por 15 minutos.'
+        });
+      }
+
       return reply.code(401).send({ error: 'Credenciales inválidas' });
+    }
+
+    // Credenciales OK → reiniciar contador si se estaba en 0 por bloqueo expirado
+    if ((user.intentos_fallidos ?? 0) > 0) {
+      await supabase
+        .from('users')
+        .update({ intentos_fallidos: 0, bloqueado_hasta: null })
+        .eq('id', user.id);
     }
 
     // Credenciales OK → generar y enviar OTP
@@ -154,17 +223,27 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         expires_at: expiresAt.toISOString()
       });
 
+    const esProduccion = (process.env['NODE_ENV'] ?? 'development') === 'production';
+
+    let codigoLogeado = false;
     try {
       await sendOtpEmail(user.email, code, user.nombre);
     } catch (err) {
       app.log.error(err);
-      return reply.code(500).send({ error: 'Error al enviar el código de verificación' });
+      // En producción el envío es obligatorio: no revelar el código y fallar.
+      if (esProduccion) {
+        return reply.code(500).send({ error: 'Error al enviar el código de verificación' });
+      }
+      // Fallback dev: se expone el código en el log y en la respuesta.
+      app.log.warn(`[OTP FALLBACK] Código de verificación para ${user.email}: ${code}`);
+      codigoLogeado = true;
     }
 
     return reply.send({
       requires2fa: true,
       email:       user.email,
-      message:     'Código de verificación enviado a tu email'
+      message:     codigoLogeado ? 'Código generado (email no enviado). Revisa el log del backend.' : 'Código de verificación enviado a tu email',
+      otpDev:      codigoLogeado ? code : undefined
     });
   });
 
@@ -220,7 +299,32 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     };
 
     const token = app.jwt.sign(payload);
+
+    await registrarAudit(app, {
+      user_id: user.id,
+      email:   user.email,
+      accion:  'LOGIN',
+      detalle: `Inicio de sesión exitoso (${user.nombre})`,
+      ip:      ipDeRequest(request)
+    });
+
     return reply.send({ token, user });
+  });
+
+
+  // ─── POST /api/auth/logout ─────────────────────────────────────────────────
+  app.post('/logout', {
+    preHandler: [app.authenticate]
+  }, async (request, reply) => {
+    await registrarAudit(app, {
+      user_id: request.user.sub,
+      email:   request.user.email,
+      accion:  'LOGOUT',
+      detalle: 'Cierre de sesión',
+      ip:      ipDeRequest(request)
+    });
+
+    return reply.send({ message: 'Sesión cerrada' });
   });
 
 

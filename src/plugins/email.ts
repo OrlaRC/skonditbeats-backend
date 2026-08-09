@@ -1,10 +1,11 @@
-const RESEND_API_KEY = process.env['RESEND_API_KEY'];
-const EMAIL_FROM     = process.env['EMAIL_FROM'] ?? 'onboarding@resend.dev';
-const DEV_EMAIL_TO   = process.env['DEV_EMAIL_TO'] ?? '';
+const BREVO_API_KEY = process.env['BREVO_API_KEY'];
+const EMAIL_FROM    = process.env['EMAIL_FROM'] ?? 'SkonditBeats';
+const EMAIL_SENDER  = process.env['EMAIL_SENDER'] ?? 'skonditbeats@example.com';
+const DEV_EMAIL_TO  = process.env['DEV_EMAIL_TO'] ?? '';
 
 export async function sendOtpEmail(to: string, code: string, nombre: string): Promise<void> {
-  if (!RESEND_API_KEY) {
-    throw new Error('Falta RESEND_API_KEY en las variables de entorno');
+  if (!BREVO_API_KEY) {
+    throw new Error('Falta BREVO_API_KEY en las variables de entorno');
   }
 
   // Siempre redirigir al DEV_EMAIL_TO si está configurado
@@ -28,22 +29,24 @@ export async function sendOtpEmail(to: string, code: string, nombre: string): Pr
     </div>
   `;
 
-  const res = await fetch('https://api.resend.com/emails', {
+  // Brevo (Sendinblue) SMTP API v3
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${RESEND_API_KEY}`,
-      'Content-Type':  'application/json'
+      'Accept':       'application/json',
+      'Api-Key':      BREVO_API_KEY,
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      from:    EMAIL_FROM,
-      to:      [recipient],
-      subject: 'Tu código de verificación — SkonditBeats',
-      html
+      sender:      { name: EMAIL_FROM, email: EMAIL_SENDER },
+      to:          [{ email: recipient }],
+      subject:     'Tu código de verificación — SkonditBeats',
+      htmlContent: html
     })
   });
 
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(`Error Resend: ${JSON.stringify(err)}`);
+    const err = await res.text();
+    throw new Error(`Error Brevo: ${res.status} ${err}`);
   }
 }
