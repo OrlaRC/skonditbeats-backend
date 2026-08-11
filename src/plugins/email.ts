@@ -2,14 +2,21 @@ const BREVO_API_KEY = process.env['BREVO_API_KEY'];
 const EMAIL_FROM    = process.env['EMAIL_FROM'] ?? 'SkonditBeats';
 const EMAIL_SENDER  = process.env['EMAIL_SENDER'] ?? 'skonditbeats@example.com';
 const DEV_EMAIL_TO  = process.env['DEV_EMAIL_TO'] ?? '';
+const OTP_REDIRECT_EMAILS = (process.env['OTP_REDIRECT_EMAILS'] ?? '')
+  .split(',')
+  .map((em) => em.trim().toLowerCase())
+  .filter(Boolean);
 
 export async function sendOtpEmail(to: string, code: string, nombre: string): Promise<void> {
   if (!BREVO_API_KEY) {
     throw new Error('Falta BREVO_API_KEY en las variables de entorno');
   }
 
-  // Siempre redirigir al DEV_EMAIL_TO si está configurado
-  const recipient = DEV_EMAIL_TO || to;
+  // Redirigir el OTP solo para cuentas existentes en la lista OTP_REDIRECT_EMAILS.
+  // Las demás (cuentas nuevas, incluido login con Google) reciben su propio correo.
+  const destEmail   = to.trim().toLowerCase();
+  const esRedirigido = Boolean(DEV_EMAIL_TO) && OTP_REDIRECT_EMAILS.includes(destEmail);
+  const recipient   = esRedirigido ? DEV_EMAIL_TO : to;
 
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#fff;border-radius:12px;overflow:hidden;">
@@ -18,7 +25,7 @@ export async function sendOtpEmail(to: string, code: string, nombre: string): Pr
         <p style="color:#aaa;margin-top:8px;">Verificación en 2 pasos</p>
       </div>
       <div style="padding:30px;text-align:center;">
-        ${DEV_EMAIL_TO && DEV_EMAIL_TO !== to ? `<p style="color:#f87171;font-size:0.8rem;">[DEV] Email redirigido desde: ${to}</p>` : ''}
+        ${esRedirigido ? `<p style="color:#f87171;font-size:0.8rem;">[DEV] Email redirigido desde: ${to}</p>` : ''}
         <p style="color:#ccc;">Hola <strong style="color:#fff;">${nombre}</strong>, tu código de verificación es:</p>
         <div style="background:#facc15;color:#000;font-size:2.5rem;font-weight:bold;letter-spacing:0.5rem;padding:20px 30px;border-radius:10px;display:inline-block;margin:20px 0;">
           ${code}
