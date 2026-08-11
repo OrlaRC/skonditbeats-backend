@@ -13,7 +13,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   const headers: Record<string, string> = {};
   for (const [key, value] of Object.entries(req.headers)) {
-    if (value !== undefined) headers[key] = Array.isArray(value) ? value.join(', ') : String(value);
+    if (value === undefined) continue;
+    const lower = key.toLowerCase();
+    if (lower === 'content-length' || lower === 'connection' || lower === 'host' || lower === 'accept-encoding') continue;
+    headers[key] = Array.isArray(value) ? value.join(', ') : String(value);
   }
 
   const bodyIsEmpty = req.body === undefined || req.body === null || req.body === '';
