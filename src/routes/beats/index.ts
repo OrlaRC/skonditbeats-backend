@@ -40,14 +40,32 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
     if (precio_min) query = query.gte('precio', Number(precio_min));
     if (precio_max) query = query.lte('precio', Number(precio_max));
 
-    const { data, error } = await query;
+    const [beatsResult, totalResult, generosResult] = await Promise.all([
+      query,
+      supabase
+        .from('beats')
+        .select('id', { count: 'exact', head: true })
+        .eq('activo', true),
+      supabase
+        .from('beats')
+        .select('genero')
+        .eq('activo', true)
+    ]);
+
+    const { data, error } = beatsResult;
 
     if (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al obtener los beats' });
     }
 
-    return reply.send({ beats: data });
+    const generosDistintos = [...new Set((generosResult.data ?? []).map(b => b.genero))].sort();
+
+    return reply.send({
+      beats:  data,
+      total:  totalResult.count ?? data.length,
+      generos: generosDistintos
+    });
   });
 
 
