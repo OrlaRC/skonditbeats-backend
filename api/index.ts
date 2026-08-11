@@ -24,6 +24,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       ? await readBody(req)
       : '';
 
+    if (req.url?.includes('__debug')) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ rawBody, url: req.url, method: req.method }));
+      return;
+    }
+
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
       if (value === undefined) continue;
