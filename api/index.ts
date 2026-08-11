@@ -1,15 +1,28 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import type { IncomingMessage, ServerResponse } from 'http';
 import { buildApp } from '../src/app';
 
 let appPromise: ReturnType<typeof buildApp> | null = null;
 
-export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     if (!appPromise) {
       appPromise = buildApp();
     }
     const app = await appPromise;
     await app.ready();
+
+    const rawBody = req.method !== 'GET' && req.method !== 'HEAD'
+      ? await readBody(req)
+      : '';
 
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
@@ -19,18 +32,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       headers[key] = Array.isArray(value) ? value.join(', ') : String(value);
     }
 
-    const hasBody =
-      req.body !== undefined && req.body !== null && req.body !== ''
-      && req.method !== 'GET' && req.method !== 'HEAD';
-
     const options: any = {
       method: req.method ?? 'GET',
       url:    req.url ?? '/',
       headers
     };
 
-    if (hasBody) {
-      options.payload = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    if (rawBody) {
+      options.payload = rawBody;
     }
 
     const response = await app.inject(options);
