@@ -15,14 +15,12 @@ import { auditRoutes }    from './routes/audit/index';
 import { uploadRoutes }   from './routes/uploads/index';
 
 export async function buildApp() {
+  const prod = process.env['NODE_ENV'] === 'production';
+
   const app = Fastify({
-    logger: {
-      level: process.env['NODE_ENV'] === 'production' ? 'warn' : 'info',
-      transport:
-        process.env['NODE_ENV'] === 'production'
-          ? undefined
-          : { target: 'pino-pretty', options: { colorize: true } }
-    }
+    logger: prod
+      ? { level: 'warn' }
+      : undefined
   });
 
   await registerCors(app);
