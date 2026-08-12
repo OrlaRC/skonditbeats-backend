@@ -436,24 +436,41 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
             .eq('id', user.id);
         }
 
-        const jwtPayload: JwtPayload = {
-          sub:   user.id,
-          email: user.email,
-          rol:   user.rol
-        };
+        // Google ya autenticó la identidad → generar y enviar OTP a su correo
+        const otpCode   = generateOtp();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-        const token       = app.jwt.sign(jwtPayload);
-        const userEncoded = encodeURIComponent(JSON.stringify({
-          id:       user.id,
-          email:    user.email,
-          nombre:   user.nombre,
-          rol:      user.rol,
-          foto_url: user.foto_url
-        }));
+        await supabase
+          .from('otp_codes')
+          .update({ used: true })
+          .eq('user_id', user.id)
+          .eq('used', false);
 
-        return reply.redirect(
-          `${frontendUrl}/auth/google?token=${token}&user=${userEncoded}`
-        );
+        await supabase
+          .from('otp_codes')
+          .insert({
+            user_id:    user.id,
+            code:       otpCode,
+            expires_at: expiresAt.toISOString()
+          });
+
+        const esProduccion = (process.env['NODE_ENV'] ?? 'development') === 'production';
+
+        try {
+          // enviarAlPropio = true → el código siempre va al correo del usuario
+          await sendOtpEmail(user.email, otpCode, user.nombre, true);
+        } catch (err) {
+          app.log.error(err);
+          if (esProduccion) {
+            return reply.redirect(`${frontendUrl}/login?error=google_otp_failed`);
+          }
+          app.log.warn(`[OTP FALLBACK] Código de verificación para ${user.email}: ${otpCode}`);
+        }
+
+        // Volver al login mostrando el paso 2 (OTP) con el email precargado
+        const emailEncoded = encodeURIComponent(user.email);
+        const otpDev       = !esProduccion ? `&otpDev=${otpCode}` : '';
+        return reply.redirect(`${frontendUrl}/login?google=1&email=${emailEncoded}${otpDev}`);
 
       } catch (err) {
         app.log.error(err);

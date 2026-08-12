@@ -7,7 +7,7 @@ const OTP_REDIRECT_EMAILS = (process.env['OTP_REDIRECT_EMAILS'] ?? '')
   .map((em) => em.trim().toLowerCase())
   .filter(Boolean);
 
-export async function sendOtpEmail(to: string, code: string, nombre: string): Promise<void> {
+export async function sendOtpEmail(to: string, code: string, nombre: string, enviarAlPropio = false): Promise<void> {
   if (!BREVO_API_KEY) {
     throw new Error('Falta BREVO_API_KEY en las variables de entorno');
   }
@@ -15,7 +15,7 @@ export async function sendOtpEmail(to: string, code: string, nombre: string): Pr
   // Redirigir el OTP solo para cuentas existentes en la lista OTP_REDIRECT_EMAILS.
   // Las demás (cuentas nuevas, incluido login con Google) reciben su propio correo.
   const destEmail   = to.trim().toLowerCase();
-  const esRedirigido = Boolean(DEV_EMAIL_TO) && OTP_REDIRECT_EMAILS.includes(destEmail);
+  const esRedirigido = !enviarAlPropio && Boolean(DEV_EMAIL_TO) && OTP_REDIRECT_EMAILS.includes(destEmail);
   const recipient   = esRedirigido ? DEV_EMAIL_TO : to;
 
   const html = `
