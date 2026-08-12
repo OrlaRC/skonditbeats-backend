@@ -204,6 +204,35 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         .eq('id', user.id);
     }
 
+    // Credenciales OK → los administradores entran directo (sin OTP)
+    if (user.rol === 'ADMIN') {
+      await registrarAudit(app, {
+        user_id: user.id,
+        email:   user.email,
+        accion:  'LOGIN',
+        detalle: `Inicio de sesión exitoso (${user.nombre})`,
+        ip:      ipDeRequest(request)
+      });
+
+      const payloadAdmin: JwtPayload = {
+        sub:   user.id,
+        email: user.email,
+        rol:   user.rol
+      };
+
+      return reply.send({
+        token: app.jwt.sign(payloadAdmin),
+        user:  {
+          id:       user.id,
+          email:    user.email,
+          nombre:   user.nombre,
+          username: user.username,
+          rol:      user.rol,
+          foto_url: user.foto_url
+        }
+      });
+    }
+
     // Credenciales OK → generar y enviar OTP
     const code      = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
