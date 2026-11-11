@@ -12,7 +12,7 @@ export async function registerCors(app: FastifyInstance): Promise<void> {
       cb(new Error(`Origin no permitido: ${origin}`), false);
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
     credentials: true
   });
 }

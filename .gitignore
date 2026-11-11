@@ -5,3 +5,8 @@ dist/
 
 .vercel
 .env*
+
+# Entorno local de pruebas
+local/bin/
+local/storage/
+scripts/p12/resultados/_pgbench.sql

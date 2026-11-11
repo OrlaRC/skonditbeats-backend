@@ -1,0 +1,189 @@
+{
+  "version": "PostgreSQL 16.11",
+  "antes": {
+    "DB-01": {
+      "ms": 0.059,
+      "filas": 1,
+      "kb": 0.3583984375,
+      "indices": [
+        "beats_pkey"
+      ],
+      "secuencial": false,
+      "ordena": false
+    },
+    "DB-02": {
+      "ms": 2.498,
+      "filas": 4800,
+      "kb": 1332.8828125,
+      "indices": [],
+      "secuencial": true,
+      "ordena": true
+    },
+    "DB-03": {
+      "ms": 2.342,
+      "filas": 4800,
+      "kb": 1332.8828125,
+      "indices": [],
+      "secuencial": true,
+      "ordena": true
+    },
+    "DB-04": {
+      "ms": 0.5,
+      "filas": 70,
+      "kb": 19.390625,
+      "indices": [
+        "idx_beats_genero"
+      ],
+      "secuencial": false,
+      "ordena": true
+    },
+    "DB-05": {
+      "ms": 140.355,
+      "filas": 12000,
+      "kb": 11771.0966796875,
+      "indices": [
+        "users_pkey",
+        "idx_contact_replies_message"
+      ],
+      "secuencial": true,
+      "ordena": true
+    },
+    "DB-06": {
+      "ms": 2.578,
+      "filas": 6,
+      "kb": 5.8955078125,
+      "indices": [
+        "users_pkey",
+        "idx_contact_replies_message"
+      ],
+      "secuencial": true,
+      "ordena": true
+    },
+    "DB-07": {
+      "ms": 0.376,
+      "filas": 18,
+      "kb": 3.205078125,
+      "indices": [
+        "idx_orders_user",
+        "order_items_order_id_beat_id_key",
+        "beats_pkey"
+      ],
+      "secuencial": false,
+      "ordena": true
+    }
+  },
+  "despues": {
+    "DB-01": {
+      "ms": 0.102,
+      "filas": 1,
+      "kb": 0.3583984375,
+      "indices": [
+        "beats_pkey"
+      ],
+      "secuencial": false,
+      "ordena": false
+    },
+    "DB-02": {
+      "ms": 0.105,
+      "filas": 20,
+      "kb": 5.4609375,
+      "indices": [
+        "idx_beats_activo_fecha"
+      ],
+      "secuencial": false,
+      "ordena": false
+    },
+    "DB-03": {
+      "ms": 1.259,
+      "filas": 4800,
+      "kb": 1332.8828125,
+      "indices": [
+        "idx_beats_activo_fecha"
+      ],
+      "secuencial": false,
+      "ordena": false
+    },
+    "DB-04": {
+      "ms": 0.34,
+      "filas": 20,
+      "kb": 5.5234375,
+      "indices": [
+        "idx_beats_activo_fecha"
+      ],
+      "secuencial": false,
+      "ordena": false
+    },
+    "DB-05": {
+      "ms": 0.438,
+      "filas": 20,
+      "kb": 9.1943359375,
+      "indices": [
+        "idx_contact_messages_estado_fecha",
+        "users_pkey",
+        "idx_contact_replies_message"
+      ],
+      "secuencial": false,
+      "ordena": false
+    },
+    "DB-06": {
+      "ms": 0.354,
+      "filas": 6,
+      "kb": 2.8046875,
+      "indices": [
+        "idx_contact_messages_user_fecha",
+        "users_pkey",
+        "idx_contact_replies_message"
+      ],
+      "secuencial": false,
+      "ordena": true
+    },
+    "DB-07": {
+      "ms": 0.36,
+      "filas": 18,
+      "kb": 3.205078125,
+      "indices": [
+        "idx_orders_user",
+        "order_items_order_id_beat_id_key",
+        "beats_pkey"
+      ],
+      "secuencial": false,
+      "ordena": true
+    }
+  },
+  "concurrencia": {
+    "distintos": {
+      "clientes": 20,
+      "transacciones": 2000,
+      "latenciaMs": 0.778,
+      "tps": 25707.601738,
+      "fallidas": 0
+    },
+    "mismo": {
+      "clientes": 20,
+      "transacciones": 2000,
+      "latenciaMs": 8.911,
+      "tps": 2244.379233,
+      "fallidas": 0
+    },
+    "tomar": {
+      "intentos": 20,
+      "ganadores": 1
+    },
+    "pago": {
+      "intentos": 20,
+      "insertados": 1,
+      "enBase": 1
+    },
+    "sinClave": {
+      "intentos": 20,
+      "enBase": 20
+    },
+    "integridad": {
+      "renglonesHuerfanos": 0,
+      "respuestasHuerfanas": 0,
+      "foliosRepetidos": 0,
+      "tickets": 12000,
+      "estadoTicket1": "EN_PROCESO"
+    }
+  }
+}

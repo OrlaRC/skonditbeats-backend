@@ -177,6 +177,41 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
   });
 
 
+  // ─── PUT /api/packs/:id/imagen ─────────────────────────────────────────────
+  // Liga la portada cuando termina su subida, sin tocar los beats del paquete.
+  app.put<{ Params: Params; Body: { imagen_url: string } }>('/:id/imagen', {
+    preHandler: [app.authenticate],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['imagen_url'],
+        properties: { imagen_url: { type: 'string', minLength: 8 } }
+      }
+    }
+  }, async (request, reply) => {
+    if (!isAdminRole(request.user.rol)) {
+      return reply.code(403).send({ error: 'Acceso denegado' });
+    }
+
+    const { data: pack, error } = await supabase
+      .from('packs')
+      .update({ imagen_url: request.body.imagen_url, updated_at: new Date().toISOString() })
+      .eq('id', request.params.id)
+      .select('id')
+      .maybeSingle();
+
+    if (error) {
+      app.log.error(error);
+      return reply.code(500).send({ error: 'Error al guardar la portada' });
+    }
+    if (!pack) {
+      return reply.code(404).send({ error: 'Paquete no encontrado' });
+    }
+
+    return reply.send({ pack });
+  });
+
+
   // ─── DELETE /api/packs/:id ─────────────────────────────────────────────────
   app.delete<{ Params: Params }>('/:id', {
     preHandler: [app.authenticate]

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { supabase }             from '../../db/supabase';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
+import { claveIdempotencia, esDuplicado } from '../../plugins/idempotencia';
 
 interface OrderBody {
   beats?:  string[]; // array de beat IDs
@@ -34,9 +35,17 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
     const { beats: beatIds, packId } = request.body;
     const userId = request.user.sub;
 
+    // Reintento de un pago cuya respuesta se perdió: se devuelve la orden que ya
+    // existe en lugar de rechazarla con 409 o cobrarla otra vez.
+    const clientRef = claveIdempotencia(request);
+    if (clientRef) {
+      const previa = await ordenPorClave(clientRef, userId);
+      if (previa) return reply.code(200).send({ order: previa, repetida: true });
+    }
+
     // ── Compra de un PAQUETE ────────────────────────────────────────────────
     if (packId) {
-      return comprarPaquete(app, request, reply, packId, userId);
+      return comprarPaquete(app, request, reply, packId, userId, clientRef);
     }
 
     if (!beatIds || beatIds.length === 0) {
@@ -71,9 +80,14 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
     // Crear la orden
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .insert({ user_id: userId, total, status: 'COMPLETADO' })
+      .insert({ user_id: userId, total, status: 'COMPLETADO', client_ref: clientRef })
       .select('id')
       .single();
+
+    // Dos envíos simultáneos con la misma clave: solo uno pasa la restricción UNIQUE.
+    if (esDuplicado(orderError) && clientRef) {
+      return reply.code(200).send({ order: await ordenPorClave(clientRef, userId), repetida: true });
+    }
 
     if (orderError || !order) {
       app.log.error(orderError);
@@ -222,12 +236,23 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
 // ──────────────────────────────────────────────────────────────────────────────
 // Compra de un paquete: crea la orden marcada con pack_id y los items de sus beats
 // ──────────────────────────────────────────────────────────────────────────────
+async function ordenPorClave(clientRef: string, userId: string) {
+  const { data } = await supabase
+    .from('orders')
+    .select('id, total, status, pack_id')
+    .eq('client_ref', clientRef)
+    .eq('user_id', userId)
+    .maybeSingle();
+  return data;
+}
+
 async function comprarPaquete(
   app:    FastifyInstance,
   request: any,
   reply:   any,
   packId:  string,
-  userId:  string
+  userId:  string,
+  clientRef: string | null
 ) {
   // Obtener el paquete con sus beats
   const { data: pack, error: packError } = await supabase
@@ -266,9 +291,13 @@ async function comprarPaquete(
 
   const { data: order, error: orderError } = await supabase
     .from('orders')
-    .insert({ user_id: userId, total, status: 'COMPLETADO', pack_id: pack.id })
+    .insert({ user_id: userId, total, status: 'COMPLETADO', pack_id: pack.id, client_ref: clientRef })
     .select('id')
     .single();
+
+  if (esDuplicado(orderError) && clientRef) {
+    return reply.code(200).send({ order: await ordenPorClave(clientRef, userId), repetida: true });
+  }
 
   if (orderError || !order) {
     app.log.error(orderError);

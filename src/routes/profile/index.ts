@@ -52,9 +52,12 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
       }
     }
   }, async (request, reply) => {
+    // Solo estos campos: el cuerpo nunca debe poder cambiar rol, activo o password.
+    const { nombre, username, direccion, telefono, edad } = request.body;
+
     const { data, error } = await supabase
       .from('users')
-      .update({ ...request.body, updated_at: new Date().toISOString() })
+      .update({ nombre, username, direccion, telefono, edad, updated_at: new Date().toISOString() })
       .eq('id', request.user.sub)
       .select('id, email, nombre, username, rol, foto_url, direccion, telefono, edad, fecha_registro')
       .single();

@@ -7,6 +7,46 @@ const OTP_REDIRECT_EMAILS = (process.env['OTP_REDIRECT_EMAILS'] ?? '')
   .map((em) => em.trim().toLowerCase())
   .filter(Boolean);
 
+const escaparHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// Avisa al cliente de la respuesta del administrador a su mensaje de contacto.
+export async function sendContactReplyEmail(to: string, nombre: string, texto: string, devuelto: boolean): Promise<void> {
+  if (!BREVO_API_KEY) {
+    throw new Error('Falta BREVO_API_KEY en las variables de entorno');
+  }
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#fff;border-radius:12px;padding:30px;">
+      <h1 style="color:#facc15;margin:0 0 16px;">SkonditBeats</h1>
+      <p style="color:#ccc;">Hola <strong style="color:#fff;">${escaparHtml(nombre)}</strong>,
+      ${devuelto ? 'necesitamos más información sobre tu mensaje:' : 'respondimos tu mensaje:'}</p>
+      <p style="color:#fff;white-space:pre-wrap;">${escaparHtml(texto)}</p>
+      <p style="color:#666;font-size:0.8rem;">Puedes continuar la conversación en la app, en Contacto &gt; Mis mensajes.</p>
+    </div>
+  `;
+
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Accept':       'application/json',
+      'Api-Key':      BREVO_API_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      sender:      { name: EMAIL_FROM, email: EMAIL_SENDER },
+      to:          [{ email: to }],
+      subject:     devuelto ? 'Necesitamos más información — SkonditBeats' : 'Respondimos tu mensaje — SkonditBeats',
+      htmlContent: html
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Error Brevo: ${res.status} ${err}`);
+  }
+}
+
 export async function sendOtpEmail(to: string, code: string, nombre: string, enviarAlPropio = false): Promise<void> {
   if (!BREVO_API_KEY) {
     throw new Error('Falta BREVO_API_KEY en las variables de entorno');

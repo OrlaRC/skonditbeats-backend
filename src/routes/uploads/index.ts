@@ -1,5 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { supabase } from '../../db/supabase';
+import { isAdminRole } from '../../types/index';
+
+const IMAGENES_AVATAR = ['image/jpeg', 'image/png', 'image/webp'];
 
 const BUCKETS_VALIDOS = ['beats-images', 'beats-audio', 'avatars'] as const;
 type Bucket = (typeof BUCKETS_VALIDOS)[number];
@@ -28,6 +31,16 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'contentType es obligatorio' });
     }
 
+    // Los clientes solo pueden subir su foto de perfil; audio y portadas son del admin.
+    if (!isAdminRole(request.user.rol)) {
+      if (bucket !== 'avatars') {
+        return reply.code(403).send({ error: 'Acceso denegado' });
+      }
+      if (!IMAGENES_AVATAR.includes(contentType)) {
+        return reply.code(400).send({ error: 'Formato no permitido. Usa JPG, PNG o WebP.' });
+      }
+    }
+
     const extension = contentType.split('/')[1] ?? 'bin';
     const name      = fileName
       ? `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`
@@ -51,7 +64,16 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
       token:      data.token,
       path:       data.path,
       contentType,
-      publicUrl:  publicUrlData.publicUrl
+      publicUrl:  publicUrlData.publicUrl,
+      // Carga reanudable (protocolo TUS): la app sube por partes a este endpoint
+      // de Supabase Storage con el token en la cabecera x-signature. Si se corta
+      // la red, pregunta cuánto llegó y continúa desde ahí.
+      resumable: {
+        endpoint:   `${process.env['SUPABASE_URL']}/storage/v1/upload/resumable`,
+        bucket,
+        objectName: data.path,
+        token:      data.token
+      }
     });
   });
 }
