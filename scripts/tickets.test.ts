@@ -250,7 +250,7 @@ test('la URL firmada incluye los datos para la subida reanudable', async () => {
   });
   assert.equal(res.statusCode, 200);
   const { resumable } = res.json();
-  assert.equal(resumable.endpoint, 'http://supabase.invalid/storage/v1/upload/resumable');
+  assert.equal(resumable.endpoint, 'http://supabase.invalid/storage/v1/upload/resumable/sign');
   assert.equal(resumable.bucket, 'beats-audio');
   assert.equal(resumable.token, 'tok');
 });

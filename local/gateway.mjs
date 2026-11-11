@@ -88,7 +88,8 @@ async function storage(req, res, url) {
 
   // ── Subida reanudable (TUS 1.0.0) ───────────────────────────────────────────
   const tus = { 'tus-resumable': '1.0.0', 'access-control-expose-headers': 'Location, Upload-Offset, Upload-Length' };
-  if (ruta === '/upload/resumable' && req.method === 'POST') {
+  // /upload/resumable/sign es la variante con token firmado (x-signature), igual que en Supabase.
+  if ((ruta === '/upload/resumable' || ruta === '/upload/resumable/sign') && req.method === 'POST') {
     if (!req.headers['x-signature'] && !req.headers.authorization) return json(res, 403, { error: 'sin firma' }, tus);
     const campos = Object.fromEntries(
       String(req.headers['upload-metadata'] ?? '').split(',').filter(Boolean).map((par) => {
@@ -101,10 +102,10 @@ async function storage(req, res, url) {
     const id = randomUUID();
     writeFileSync(meta(id), JSON.stringify({ bucket: campos.bucketName, nombre: campos.objectName, total }));
     writeFileSync(datos(id), '');
-    res.writeHead(201, { ...tus, location: `http://${req.headers.host}/storage/v1/upload/resumable/${id}` });
+    res.writeHead(201, { ...tus, location: `http://${req.headers.host}/storage/v1${ruta}/${id}` });
     return res.end();
   }
-  m = /^\/upload\/resumable\/([0-9a-f-]{36})$/.exec(ruta);
+  m = /^\/upload\/resumable\/(?:sign\/)?([0-9a-f-]{36})$/.exec(ruta);
   if (m) {
     const id = m[1];
     if (!existsSync(meta(id))) return json(res, 404, { error: 'la subida no existe o expiró' }, tus);

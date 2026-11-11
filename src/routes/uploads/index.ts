@@ -65,11 +65,12 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
       path:       data.path,
       contentType,
       publicUrl:  publicUrlData.publicUrl,
-      // Carga reanudable (protocolo TUS): la app sube por partes a este endpoint
-      // de Supabase Storage con el token en la cabecera x-signature. Si se corta
-      // la red, pregunta cuánto llegó y continúa desde ahí.
+      // Carga reanudable (protocolo TUS): la app sube por partes con el token en
+      // la cabecera x-signature. Con token firmado el endpoint es /resumable/sign
+      // (en /resumable Supabase espera un JWT de usuario y responde 403).
+      // Si se corta la red, pregunta cuánto llegó y continúa desde ahí.
       resumable: {
-        endpoint:   `${process.env['SUPABASE_URL']}/storage/v1/upload/resumable`,
+        endpoint:   `${process.env['SUPABASE_URL']}/storage/v1/upload/resumable/sign`,
         bucket,
         objectName: data.path,
         token:      data.token
