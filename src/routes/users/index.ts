@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import bcrypt                   from 'bcryptjs';
 import { supabase }             from '../../db/supabase';
-import { isAdminRole, UserRole, ROLES_VALIDOS, PERMISOS_DISPONIBLES } from '../../types/index';
+import { isAdminRole, isSuperAdmin, puedeGestionar, UserRole, ROLES_VALIDOS, PERMISOS_DISPONIBLES } from '../../types/index';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
 
@@ -40,7 +40,25 @@ interface PermisosBody {
   permissions: string[];
 }
 
+const SOLO_SUPER = 'Solo el super administrador puede gestionar administradores';
+
 export async function usersRoutes(app: FastifyInstance): Promise<void> {
+
+  /** Rol actual de una cuenta, o null si no existe. */
+  async function rolDe(id: string): Promise<string | null> {
+    const { data } = await supabase.from('users').select('rol').eq('id', id).maybeSingle();
+    return data?.rol ?? null;
+  }
+
+  /** Cuántos super administradores activos hay (nunca debe quedar ninguno). */
+  async function superAdminsActivos(): Promise<number> {
+    const { count } = await supabase
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('rol', 'SUPER_ADMIN')
+      .eq('activo', true);
+    return count ?? 0;
+  }
 
   app.addHook('preHandler', app.authenticate);
   app.addHook('preHandler', async (request, reply) => {
@@ -115,6 +133,10 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const rolFinal = rol && ROLES_VALIDOS.includes(rol) ? rol : 'CLIENTE';
+
+    if (!puedeGestionar(request.user.rol, null, rolFinal)) {
+      return reply.code(403).send({ error: SOLO_SUPER });
+    }
 
     const { data: existing } = await supabase
       .from('users')
@@ -215,6 +237,17 @@ const { id } = request.params;
       }
     }
 
+    if (!puedeGestionar(request.user.rol, actual.rol, rol)) {
+      return reply.code(403).send({ error: SOLO_SUPER });
+    }
+
+    // Nunca dejar el sistema sin un super administrador activo.
+    const pierdeSuper = isSuperAdmin(actual.rol) && actual.activo !== false &&
+      ((rol !== undefined && rol !== 'SUPER_ADMIN') || activo === false);
+    if (pierdeSuper && (await superAdminsActivos()) <= 1) {
+      return reply.code(400).send({ error: 'Debe quedar al menos un super administrador activo' });
+    }
+
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (nombre)    patch.nombre    = nombre;
     if (username !== undefined) patch.username = username || null;
@@ -284,6 +317,10 @@ const { id } = request.params;
   }, async (request, reply) => {
     const { password } = request.body;
 
+    if (!puedeGestionar(request.user.rol, await rolDe(request.params.id))) {
+      return reply.code(403).send({ error: SOLO_SUPER });
+    }
+
     const errorPolitica = validarPoliticaPassword(password);
     if (errorPolitica) {
       return reply.code(400).send({ error: errorPolitica, politica: DESCRIPCION_POLITICA });
@@ -350,6 +387,18 @@ const { id } = request.params;
       return reply.code(404).send({ error: 'Usuario no encontrado' });
     }
 
+    if (request.params.id === request.user.sub) {
+      return reply.code(400).send({ error: 'No puedes cambiar tu propio rol' });
+    }
+
+    if (!puedeGestionar(request.user.rol, target.rol, rol)) {
+      return reply.code(403).send({ error: SOLO_SUPER });
+    }
+
+    if (target.rol === 'SUPER_ADMIN' && rol !== 'SUPER_ADMIN' && (await superAdminsActivos()) <= 1) {
+      return reply.code(400).send({ error: 'Debe quedar al menos un super administrador activo' });
+    }
+
     const { data: user, error } = await supabase
       .from('users')
       .update({ rol, updated_at: new Date().toISOString() })
@@ -388,6 +437,10 @@ const { id } = request.params;
     }
   }, async (request, reply) => {
     const { permissions } = request.body;
+
+    if (!puedeGestionar(request.user.rol, await rolDe(request.params.id))) {
+      return reply.code(403).send({ error: SOLO_SUPER });
+    }
 
     const invalidos = permissions.filter(p => !PERMISOS_DISPONIBLES.includes(p));
     if (invalidos.length > 0) {

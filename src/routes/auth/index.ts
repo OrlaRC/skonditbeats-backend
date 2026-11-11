@@ -6,6 +6,7 @@ import { sendOtpEmail }          from '../../plugins/email';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
 import type { JwtPayload }       from '../../types/index';
+import { isAdminRole }           from '../../types/index';
 
 const MAX_INTENTOS      = 5;
 const TIEMPO_BLOQUEO_MS = 15 * 60 * 1000; // 15 minutos
@@ -205,7 +206,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Credenciales OK → los administradores entran directo (sin OTP)
-    if (user.rol === 'ADMIN') {
+    if (isAdminRole(user.rol)) {
       await registrarAudit(app, {
         user_id: user.id,
         email:   user.email,

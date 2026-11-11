@@ -148,6 +148,8 @@ create table if not exists contact_messages (
   user_id    uuid        references users(id) on delete set null,
   asignado_a uuid,
   client_ref uuid        unique,
+  no_leido_cliente boolean not null default false,
+  no_leido_admin   boolean not null default true,
   cerrado_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

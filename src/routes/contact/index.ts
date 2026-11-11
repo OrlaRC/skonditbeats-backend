@@ -21,6 +21,7 @@ interface ListaQuery {
   tipo?:     string;
   asignado?: string;
   q?:        string;
+  no_leidos?: string;
 }
 
 export const ESTADOS_TICKET = ['ABIERTO', 'EN_PROCESO', 'RESPONDIDO', 'DEVUELTO', 'RESUELTO', 'CERRADO'] as const;
@@ -32,7 +33,7 @@ const ESTADOS_ADMIN: EstadoTicket[]   = ['ABIERTO', 'EN_PROCESO', 'RESUELTO', 'C
 const ESTADOS_CLIENTE: EstadoTicket[] = ['ABIERTO', 'CERRADO'];
 
 const BASE = `id, folio, asunto, nombre, email, mensaje, tipo, estado, prioridad, user_id, asignado_a,
-  created_at, updated_at, cerrado_at,
+  created_at, updated_at, cerrado_at, no_leido_cliente, no_leido_admin,
   asignado:users!contact_messages_asignado_a_fkey ( nombre )`;
 
 // Detalle: el ticket con toda su conversación.
@@ -135,6 +136,8 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
     if (query.tipo === 'ERROR' || query.tipo === 'MENSAJE') consulta = consulta.eq('tipo', query.tipo);
     if (query.asignado) consulta = consulta.eq('asignado_a', query.asignado);
+    // Solo con novedades: para el admin, las de los clientes; para el cliente, las del admin.
+    if (query.no_leidos === '1') consulta = consulta.eq(userId ? 'no_leido_cliente' : 'no_leido_admin', true);
     if (query.q) {
       const folio = Number(query.q.replace(/^#/, ''));
       if (Number.isInteger(folio) && folio > 0) {
@@ -190,6 +193,60 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
 
     return reply.send(cuerpo);
+  });
+
+
+  // ─── GET /api/contact/no-leidos ────────────────────────────────────────────
+  // Tickets con novedades para quien pregunta: al cliente, respuestas o cambios
+  // de estado del admin; al admin, tickets nuevos o respuestas de clientes.
+  // La app lo consulta cada cierto tiempo para mostrar el aviso y la insignia.
+  app.get('/no-leidos', {
+    preHandler: [app.authenticate]
+  }, async (request, reply) => {
+    const esAdmin = isAdminRole(request.user.rol);
+
+    let consulta = supabase
+      .from('contact_messages')
+      .select('id, folio, asunto, nombre, tipo, estado, updated_at', { count: 'exact' })
+      .order('updated_at', { ascending: false })
+      .limit(20);
+    consulta = esAdmin
+      ? consulta.eq('no_leido_admin', true)
+      : consulta.eq('user_id', request.user.sub).eq('no_leido_cliente', true);
+
+    const { data, error, count } = await consulta;
+    if (error) {
+      app.log.error(error);
+      return reply.code(500).send({ error: 'Error al consultar los avisos' });
+    }
+
+    return reply.send({ total: count ?? data?.length ?? 0, tickets: data ?? [] });
+  });
+
+
+  // ─── PUT /api/contact/:id/visto ────────────────────────────────────────────
+  // Marca el ticket como leído por su dueño o por los administradores.
+  app.put<{ Params: { id: string } }>('/:id/visto', {
+    preHandler: [app.authenticate]
+  }, async (request, reply) => {
+    const esAdmin = isAdminRole(request.user.rol);
+
+    let cambio = supabase
+      .from('contact_messages')
+      .update(esAdmin ? { no_leido_admin: false } : { no_leido_cliente: false })
+      .eq('id', request.params.id);
+    if (!esAdmin) cambio = cambio.eq('user_id', request.user.sub);
+
+    const { data, error } = await cambio.select('id').maybeSingle();
+    if (error) {
+      app.log.error(error);
+      return reply.code(500).send({ error: 'Error al marcar el ticket' });
+    }
+    if (!data) {
+      return reply.code(404).send({ error: 'Mensaje no encontrado' });
+    }
+
+    return reply.code(204).send();
   });
 
 
@@ -274,9 +331,15 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Si responde el cliente, el ticket vuelve a la bandeja de pendientes.
+    // Se marca como no leído para el otro lado: así le llega el aviso.
     const { error: estadoError } = await supabase
       .from('contact_messages')
-      .update({ estado: esAdmin ? estadoAdmin : 'ABIERTO', cerrado_at: null, updated_at: new Date().toISOString() })
+      .update({
+        estado:     esAdmin ? estadoAdmin : 'ABIERTO',
+        cerrado_at: null,
+        updated_at: new Date().toISOString(),
+        ...(esAdmin ? { no_leido_cliente: true } : { no_leido_admin: true })
+      })
       .eq('id', id);
 
     if (estadoError) {
@@ -413,7 +476,12 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
 
     let cambio = supabase
       .from('contact_messages')
-      .update({ estado, cerrado_at: terminado ? ahora : null, updated_at: ahora })
+      .update({
+        estado,
+        cerrado_at: terminado ? ahora : null,
+        updated_at: ahora,
+        ...(esAdmin ? { no_leido_cliente: ticket.user_id !== null } : { no_leido_admin: true })
+      })
       .eq('id', request.params.id);
     if (esperado) cambio = cambio.eq('estado', esperado);
 

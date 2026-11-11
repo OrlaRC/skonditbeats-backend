@@ -2,9 +2,14 @@
 // Tipos compartidos — SkonditBeats API
 // ──────────────────────────────────────────────────────────────────────────────
 
-export type UserRole = 'ADMIN' | 'CLIENTE';
+// Tres roles:
+//   CLIENTE      compra y abre tickets.
+//   ADMIN        administra catálogo, tickets y clientes.
+//   SUPER_ADMIN  todo lo del ADMIN y además gestiona a los administradores
+//                (crearlos, cambiarles el rol, la contraseña o desactivarlos).
+export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'CLIENTE';
 
-export const ROLES_VALIDOS: UserRole[] = ['ADMIN', 'CLIENTE'];
+export const ROLES_VALIDOS: UserRole[] = ['SUPER_ADMIN', 'ADMIN', 'CLIENTE'];
 
 export const PERMISOS_DISPONIBLES: string[] = [
   'user:view',
@@ -22,10 +27,27 @@ export const PERMISOS_DISPONIBLES: string[] = [
   'audit:view'
 ];
 
-export const ADMIN_ROLES: UserRole[] = ['ADMIN'];
+export const ADMIN_ROLES: UserRole[] = ['SUPER_ADMIN', 'ADMIN'];
 
-export function isAdminRole(rol: string): boolean {
-  return rol === 'ADMIN';
+/** ADMIN o SUPER_ADMIN: acceso al panel de administración. */
+export function isAdminRole(rol: string | null | undefined): boolean {
+  return rol === 'ADMIN' || rol === 'SUPER_ADMIN';
+}
+
+export function isSuperAdmin(rol: string | null | undefined): boolean {
+  return rol === 'SUPER_ADMIN';
+}
+
+/**
+ * ¿Puede quien tiene el rol `actor` modificar a una cuenta con rol `objetivo`
+ * y dejarla con rol `nuevo`? Un ADMIN solo gestiona clientes; tocar o crear
+ * administradores es exclusivo del SUPER_ADMIN.
+ */
+export function puedeGestionar(actor: string, objetivo: string | null, nuevo?: string | null): boolean {
+  if (isSuperAdmin(actor)) return true;
+  if (!isAdminRole(actor)) return false;
+  const tocaAdmin = isAdminRole(objetivo) || isAdminRole(nuevo ?? null);
+  return !tocaAdmin;
 }
 
 export interface User {
