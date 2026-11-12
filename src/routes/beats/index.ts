@@ -62,11 +62,20 @@ export function invalidarCatalogo(): void {
   resumen = null;
 }
 
+export const FALTAN_CAMPOS = 'nombre, genero, bpm y precio son obligatorios';
+
+/**
+ * Código HTTP para un error de validarBeat: si faltan campos la petición está mal
+ * estructurada (400); si están todos pero un valor no es aceptable, la petición se
+ * entendió y no se puede cumplir (422). Antes todo era 400 (Práctica 11, DEF-13).
+ */
+export const codigoValidacion = (error: string) => (error === FALTAN_CAMPOS ? 400 : 422);
+
 /** Devuelve el mensaje de error, o null si los datos del beat son válidos. */
 export function validarBeat(body: Partial<BeatBody> | undefined): string | null {
   const { nombre, genero, bpm, precio } = body ?? {};
   if (!nombre || !genero || bpm === undefined || precio === undefined) {
-    return 'nombre, genero, bpm y precio son obligatorios';
+    return FALTAN_CAMPOS;
   }
   if (String(nombre).trim().length < 2 || String(nombre).length > 150) return 'El nombre debe tener de 2 a 150 caracteres';
   if (String(genero).trim().length < 2 || String(genero).length > 80) return 'El género debe tener de 2 a 80 caracteres';
@@ -161,7 +170,7 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
 
     const invalido = validarBeat(request.body);
     if (invalido) {
-      return reply.code(400).send({ error: invalido });
+      return reply.code(codigoValidacion(invalido)).send({ error: invalido });
     }
 
     const { nombre, genero, bpm, precio, descripcion, imagen_url, audio_url } = request.body;
@@ -268,7 +277,7 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
 
     const invalido = validarBeat(request.body);
     if (invalido) {
-      return reply.code(400).send({ error: invalido });
+      return reply.code(codigoValidacion(invalido)).send({ error: invalido });
     }
 
     const { data: beatActual } = await supabase

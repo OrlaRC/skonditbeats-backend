@@ -231,8 +231,10 @@ test('validación de un beat antes de tocar la base', async () => {
   assert.ok(validarBeat({ nombre: 'Dark Trap' }));
 
   const res = await pedir('POST', '/api/beats', token(ADMIN, 'ADMIN'), { ...ok, bpm: 999 });
-  assert.equal(res.statusCode, 400);
+  assert.equal(res.statusCode, 422); // Práctica 11: valor fuera de rango = validación semántica
   assert.equal(escrituras('beats').length, 0);
+  const sinCampos = await pedir('POST', '/api/beats', token(ADMIN, 'ADMIN'), { nombre: 'Solo nombre' });
+  assert.equal(sinCampos.statusCode, 400);
 });
 
 test('ligar el audio de un beat no toca sus demás datos', async () => {

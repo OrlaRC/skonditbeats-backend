@@ -1,0 +1,200 @@
+[
+  {
+    "esperado": 200,
+    "obtenido": 200,
+    "situacion": "Consulta exitosa (catálogo paginado)",
+    "peticion": "GET /api/beats",
+    "ms": 17.4,
+    "bytes": 5634,
+    "cuerpo": "{\"beats\":[{\"id\":\"efa1abfe-dca5-4005-8417-082636c926c9\",\"nombre\":\"Beat 1\",\"genero\":\"Rap\",\"bpm\":164,\"precio\":450",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 200,
+    "obtenido": 200,
+    "situacion": "Consulta por id existente",
+    "peticion": "GET /api/beats/efa1abfe-dca5-4005-8417-082636c926c9",
+    "ms": 4.4,
+    "bytes": 281,
+    "cuerpo": "{\"beat\":{\"id\":\"efa1abfe-dca5-4005-8417-082636c926c9\",\"nombre\":\"Beat 1\",\"genero\":\"Rap\",\"bpm\":164,\"precio\":450,\"",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 201,
+    "obtenido": 201,
+    "situacion": "Registro creado (beat, admin)",
+    "peticion": "POST /api/beats",
+    "ms": 14.1,
+    "bytes": 300,
+    "cuerpo": "{\"beat\":{\"id\":\"26345113-8690-432c-9b4a-075ae63315ee\",\"nombre\":\"P11 Beat HTTP\",\"genero\":\"Trap\",\"bpm\":140,\"preci",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 201,
+    "obtenido": 201,
+    "situacion": "Registro creado (ticket de contacto)",
+    "peticion": "POST /api/contact",
+    "ms": 8.9,
+    "bytes": 132,
+    "cuerpo": "{\"message\":\"Mensaje recibido correctamente\",\"ticket\":{\"id\":\"73b5474e-ac80-4c45-808b-4920c49214d3\",\"folio\":1212",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 204,
+    "obtenido": 204,
+    "situacion": "Eliminación sin cuerpo de respuesta",
+    "peticion": "DELETE /api/beats/26345113-8690-432c-9b4a-075ae63315ee",
+    "ms": 13.1,
+    "bytes": 0,
+    "cuerpo": "",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 404,
+    "obtenido": 404,
+    "situacion": "Consulta después de eliminar",
+    "peticion": "GET /api/beats/26345113-8690-432c-9b4a-075ae63315ee",
+    "ms": 3.9,
+    "bytes": 30,
+    "cuerpo": "{\"error\":\"Beat no encontrado\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 400,
+    "obtenido": 400,
+    "situacion": "Datos mal estructurados (beats no es arreglo)",
+    "peticion": "POST /api/orders",
+    "ms": 1.9,
+    "bytes": 105,
+    "cuerpo": "{\"statusCode\":400,\"code\":\"FST_ERR_VALIDATION\",\"error\":\"Bad Request\",\"message\":\"body/beats must be array\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 400,
+    "obtenido": 400,
+    "situacion": "Datos mal estructurados (correo inválido)",
+    "peticion": "POST /api/contact",
+    "ms": 1.4,
+    "bytes": 153,
+    "cuerpo": "{\"statusCode\":400,\"code\":\"FST_ERR_VALIDATION\",\"error\":\"Bad Request\",\"message\":\"body/email must match pattern \\",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 401,
+    "obtenido": 401,
+    "situacion": "Usuario no autenticado (sin token)",
+    "peticion": "GET /api/orders/mis-compras",
+    "ms": 1,
+    "bytes": 38,
+    "cuerpo": "{\"error\":\"Token inválido o expirado\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 401,
+    "obtenido": 401,
+    "situacion": "Token falso",
+    "peticion": "GET /api/orders/mis-compras",
+    "ms": 1.1,
+    "bytes": 38,
+    "cuerpo": "{\"error\":\"Token inválido o expirado\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 401,
+    "obtenido": 401,
+    "situacion": "Contraseña incorrecta",
+    "peticion": "POST /api/auth/login",
+    "ms": 74.8,
+    "bytes": 35,
+    "cuerpo": "{\"error\":\"Credenciales inválidas\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 403,
+    "obtenido": 403,
+    "situacion": "Usuario sin permisos (cliente → /users)",
+    "peticion": "GET /api/users",
+    "ms": 4.2,
+    "bytes": 27,
+    "cuerpo": "{\"error\":\"Acceso denegado\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 403,
+    "obtenido": 403,
+    "situacion": "Usuario sin permisos (cliente borra un beat)",
+    "peticion": "DELETE /api/beats/efa1abfe-dca5-4005-8417-082636c926c9",
+    "ms": 3.3,
+    "bytes": 27,
+    "cuerpo": "{\"error\":\"Acceso denegado\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 404,
+    "obtenido": 404,
+    "situacion": "Recurso inexistente (UUID válido)",
+    "peticion": "GET /api/beats/00000000-0000-4000-8000-000000000000",
+    "ms": 3.3,
+    "bytes": 30,
+    "cuerpo": "{\"error\":\"Beat no encontrado\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 404,
+    "obtenido": 404,
+    "situacion": "Ruta inexistente",
+    "peticion": "GET /api/no-existe",
+    "ms": 1.1,
+    "bytes": 85,
+    "cuerpo": "{\"message\":\"Route GET:/api/no-existe not found\",\"error\":\"Not Found\",\"statusCode\":404}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 409,
+    "obtenido": 409,
+    "situacion": "Conflicto: beat ya comprado",
+    "peticion": "POST /api/orders",
+    "ms": 16.2,
+    "bytes": 47,
+    "cuerpo": "{\"error\":\"Ya tienes uno o más de estos beats\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 422,
+    "obtenido": 422,
+    "situacion": "Validación semántica: beat inexistente",
+    "peticion": "POST /api/orders",
+    "ms": 5.4,
+    "bytes": 65,
+    "cuerpo": "{\"error\":\"Uno o más beats no existen o ya no están a la venta\"}",
+    "sensible": false,
+    "cumple": true
+  },
+  {
+    "esperado": 422,
+    "obtenido": 422,
+    "situacion": "Validación semántica: BPM fuera de rango",
+    "peticion": "POST /api/beats",
+    "ms": 3.6,
+    "bytes": 51,
+    "cuerpo": "{\"error\":\"El BPM debe ser un entero entre 1 y 299\"}",
+    "sensible": false,
+    "cumple": true
+  }
+]
