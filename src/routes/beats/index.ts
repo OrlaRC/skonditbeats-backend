@@ -127,9 +127,11 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
 
   // ─── GET /api/beats/:id ────────────────────────────────────────────────────
   app.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
+    // Mismas columnas que la lista: con '*' viajaban también activo, client_ref y
+    // updated_at, que ningún cliente usa (Práctica 11, DEF-09: 362 → 234 bytes).
     const { data, error } = await supabase
       .from('beats')
-      .select('*')
+      .select(CAMPOS_LISTA)
       .eq('id', request.params.id)
       .eq('activo', true)
       .maybeSingle();

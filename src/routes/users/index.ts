@@ -4,6 +4,7 @@ import { supabase }             from '../../db/supabase';
 import { isAdminRole, isSuperAdmin, puedeGestionar, UserRole, ROLES_VALIDOS, PERMISOS_DISPONIBLES } from '../../types/index';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
+import { EMAIL }                from '../../schemas/comunes';
 
 interface CreateUserBody {
   email:       string;
@@ -108,7 +109,7 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
         type: 'object',
         required: ['email', 'password', 'nombre'],
         properties: {
-          email:    { type: 'string' },
+          email:    EMAIL,
           password: { type: 'string' },
           nombre:   { type: 'string' },
           username: { type: 'string' },

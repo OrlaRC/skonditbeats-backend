@@ -193,6 +193,19 @@ describe('POST /api/orders · caminos del grafo', () => {
     assert.ok(borrado[0].url.includes(`id=eq.${ORDEN}`));
   });
 
+  test('C11b otra compra simultánea ganó la carrera (trg_compra_unica, 23505) → 409 y se deshace', async () => {
+    reglas = [
+      lee('beats', BEATS),
+      lee('order_items', []),
+      escribe('orders', { id: ORDEN }),
+      escribe('order_items', { code: '23505', message: 'El usuario ya compró el beat' }, 409),
+      escribe('orders', null, 204, 'DELETE'),
+    ];
+    const r = await pedir('POST', '/api/orders', token(CLIENTE, 'CLIENTE'), { beats: [B1] });
+    assert.equal(r.statusCode, 409);
+    assert.equal(escrituras('orders', 'DELETE').length, 1);
+  });
+
   test('C12 reintento con la misma Idempotency-Key → 200 con la orden original', async () => {
     reglas = [(p) => (p.url.includes('client_ref=eq') ? { data: { id: ORDEN, total: 299, status: 'COMPLETADO' } } : undefined)];
     const r = await pedir('POST', '/api/orders', token(CLIENTE, 'CLIENTE'), { beats: [B1] }, CLAVE);
@@ -211,6 +224,8 @@ describe('GET /api/beats · caminos del grafo', () => {
     const r = await pedir('GET', `/api/beats/${B1}`);
     assert.equal(r.statusCode, 200);
     assert.equal(r.json().beat.id, B1);
+    const consulta = peticiones.find((p) => p.url.includes('/rest/v1/beats?'))!;
+    assert.ok(!consulta.url.includes('select=*'), 'solo se piden las columnas que usa la app');
   });
 
   test('C2 id con formato válido pero inexistente → 404', async () => {
@@ -331,6 +346,16 @@ describe('POST /api/auth/login y autorización', () => {
     sinDatosSensibles(r.json());
     const consulta = peticiones.find((p) => p.url.includes('/rest/v1/users?select=id'))!;
     assert.ok(!consulta.url.includes('password'), 'la consulta no debe pedir la columna password');
+  });
+
+  test('correo con formato inválido → 400 en registro y contacto (antes se aceptaba)', async () => {
+    for (const email of ['nope', 'a@b', 'a b@c.com', '']) {
+      const reg = await pedir('POST', '/api/auth/register', undefined, { email, password: 'Prueba-12345!', nombre: 'Ana', edad: 20 });
+      const con = await pedir('POST', '/api/contact', undefined, { nombre: 'Ana', email, mensaje: 'Hola, tengo una duda' });
+      assert.equal(reg.statusCode, 400, `registro con "${email}"`);
+      assert.equal(con.statusCode, 400, `contacto con "${email}"`);
+    }
+    assert.equal(escrituras('users').length + escrituras('contact_messages').length, 0);
   });
 
   test('ruta inexistente → 404', async () => {

@@ -5,6 +5,7 @@ import type { JwtPayload }      from '../../types/index';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { sendContactReplyEmail } from '../../plugins/email';
 import { claveIdempotencia, esDuplicado } from '../../plugins/idempotencia';
+import { EMAIL }                from '../../schemas/comunes';
 
 interface ContactBody {
   nombre:  string;
@@ -65,7 +66,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         required: ['nombre', 'email', 'mensaje'],
         properties: {
           nombre:  { type: 'string', minLength: 2 },
-          email:   { type: 'string' },
+          email:   EMAIL,
           mensaje: { type: 'string', minLength: 10 },
           tipo:    { type: 'string', enum: ['MENSAJE', 'ERROR'] },
           asunto:  { type: 'string', maxLength: 120 }

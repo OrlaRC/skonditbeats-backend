@@ -7,6 +7,7 @@ import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
 import type { JwtPayload }       from '../../types/index';
 import { isAdminRole }           from '../../types/index';
+import { EMAIL }                 from '../../schemas/comunes';
 
 const MAX_INTENTOS      = 5;
 const TIEMPO_BLOQUEO_MS = 15 * 60 * 1000; // 15 minutos
@@ -50,7 +51,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         type: 'object',
         required: ['email', 'password', 'nombre'],
         properties: {
-          email:     { type: 'string' },
+          email:     EMAIL,
           password:  { type: 'string', minLength: 10 },
           nombre:    { type: 'string', minLength: 2 },
           username:  { type: 'string' },

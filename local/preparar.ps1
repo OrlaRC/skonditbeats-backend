@@ -23,4 +23,6 @@ if ($existe -ne '1') { & $psql @con -c 'create database skondit_local' }
 & $psql @con -d skondit_local -f (Join-Path $aqui 'schema.sql')
 & $psql @con -d skondit_local -f (Join-Path $aqui 'indices.sql')
 & $psql @con -d skondit_local -f (Join-Path $aqui 'seed.sql')
+# Práctica 11: impide comprar dos veces el mismo beat con peticiones simultáneas.
+& $psql @con -d skondit_local -f (Join-Path $aqui 'p11_compras_unicas.sql')
 Write-Host 'Listo. Arranca todo con: powershell -ExecutionPolicy Bypass -File local\iniciar.ps1'

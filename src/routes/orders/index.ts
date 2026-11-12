@@ -116,8 +116,12 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
       .insert(items);
 
     if (itemsError) {
-      app.log.error(itemsError);
       await deshacerOrden(app, order.id);
+      // trg_compra_unica: otra compra simultánea del mismo beat ganó la carrera (DEF-08).
+      if (esDuplicado(itemsError)) {
+        return reply.code(409).send({ error: 'Ya tienes uno o más de estos beats' });
+      }
+      app.log.error(itemsError);
       return reply.code(500).send({ error: 'Error al guardar los items' });
     }
 
@@ -336,8 +340,11 @@ async function comprarPaquete(
     .insert(items);
 
   if (itemsError) {
-    app.log.error(itemsError);
     await deshacerOrden(app, order.id);
+    if (esDuplicado(itemsError)) {
+      return reply.code(409).send({ error: 'Ya tienes uno o más de los beats de este paquete' });
+    }
+    app.log.error(itemsError);
     return reply.code(500).send({ error: 'Error al guardar los items' });
   }
 

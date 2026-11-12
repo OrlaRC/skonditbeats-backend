@@ -1,0 +1,340 @@
+{
+  "fecha": "2026-11-12T00:34:49.841Z",
+  "motor": "PostgreSQL 16.11, compiled by Visual C++ build 1944, 64-bit",
+  "operaciones": [
+    {
+      "id": "DB-01",
+      "nombre": "Inserción de un beat válido",
+      "ok": true,
+      "ms": 8.542,
+      "sqlstate": null,
+      "mensaje": null,
+      "resultado": "id = 8c4dfcf3-ab09-4c7b-8600-f6ec8081a0a6",
+      "esperado": "éxito",
+      "cumple": true
+    },
+    {
+      "id": "DB-02",
+      "nombre": "Inserción con datos inválidos",
+      "ok": false,
+      "ms": null,
+      "sqlstate": null,
+      "mensaje": null,
+      "resultado": "12/12 rechazados con el SQLSTATE esperado",
+      "esperado": "rechazo",
+      "cumple": true
+    },
+    {
+      "id": "DB-03a",
+      "nombre": "Consulta por id existente",
+      "ok": true,
+      "ms": 5.26,
+      "sqlstate": null,
+      "mensaje": null,
+      "resultado": "1 fila",
+      "esperado": "éxito",
+      "cumple": true
+    },
+    {
+      "id": "DB-03b",
+      "nombre": "Consulta por id inexistente",
+      "ok": true,
+      "ms": 4.395,
+      "sqlstate": null,
+      "mensaje": null,
+      "resultado": "0 filas (la API responde 404)",
+      "esperado": "éxito",
+      "cumple": true
+    },
+    {
+      "id": "DB-04",
+      "nombre": "Actualización del precio",
+      "ok": true,
+      "ms": 9.371,
+      "sqlstate": null,
+      "mensaje": null,
+      "resultado": "precio devuelto 349.00; leído en otra conexión 349.00",
+      "esperado": "éxito",
+      "cumple": true
+    },
+    {
+      "id": "DB-05a",
+      "nombre": "Eliminar un beat ya vendido",
+      "ok": false,
+      "sqlstate": "23503",
+      "mensaje": "update o delete en «beats» viola la llave foránea «order_items_beat_id_fkey» en la tabla «order_items»",
+      "resultado": "rechazado 23503",
+      "esperado": "23503",
+      "cumple": true
+    },
+    {
+      "id": "DB-05b",
+      "nombre": "Eliminar la orden (cascada a renglones)",
+      "ok": true,
+      "ms": 11.792,
+      "sqlstate": null,
+      "mensaje": null,
+      "resultado": "renglones que quedan: 0",
+      "esperado": "éxito",
+      "cumple": true
+    },
+    {
+      "id": "DB-05c",
+      "nombre": "Eliminar el beat sin ventas y consultar después",
+      "ok": true,
+      "ms": 13.933,
+      "sqlstate": null,
+      "mensaje": null,
+      "resultado": "filas tras borrar: 0",
+      "esperado": "éxito",
+      "cumple": true
+    },
+    {
+      "id": "DB-07",
+      "nombre": "Intento de inyección como parámetro",
+      "ok": true,
+      "ms": 3.878,
+      "sqlstate": null,
+      "mensaje": null,
+      "resultado": "filas: 0",
+      "esperado": "éxito",
+      "cumple": true
+    }
+  ],
+  "restricciones": [
+    {
+      "tipo": "NOT NULL",
+      "nombre": "beat sin nombre",
+      "esperado": "23502",
+      "obtenido": "23502",
+      "mensaje": "el valor nulo en la columna «nombre» de la relación «beats» viola la restricción de no nulo",
+      "cumple": true
+    },
+    {
+      "tipo": "NOT NULL",
+      "nombre": "orden sin usuario",
+      "esperado": "23502",
+      "obtenido": "23502",
+      "mensaje": "el valor nulo en la columna «user_id» de la relación «orders» viola la restricción de no nulo",
+      "cumple": true
+    },
+    {
+      "tipo": "CHECK",
+      "nombre": "bpm = 300 (fuera de 1..299)",
+      "esperado": "23514",
+      "obtenido": "23514",
+      "mensaje": "el nuevo registro para la relación «beats» viola la restricción «check» «beats_bpm_check»",
+      "cumple": true
+    },
+    {
+      "tipo": "CHECK",
+      "nombre": "bpm = 0",
+      "esperado": "23514",
+      "obtenido": "23514",
+      "mensaje": "el nuevo registro para la relación «beats» viola la restricción «check» «beats_bpm_check»",
+      "cumple": true
+    },
+    {
+      "tipo": "CHECK",
+      "nombre": "precio negativo",
+      "esperado": "23514",
+      "obtenido": "23514",
+      "mensaje": "el nuevo registro para la relación «beats» viola la restricción «check» «beats_precio_check»",
+      "cumple": true
+    },
+    {
+      "tipo": "TIPO",
+      "nombre": "precio con 9 dígitos enteros (numeric(10,2))",
+      "esperado": "22003",
+      "obtenido": "22003",
+      "mensaje": "desbordamiento de campo numeric",
+      "cumple": true
+    },
+    {
+      "tipo": "TIPO",
+      "nombre": "nombre de 151 caracteres (varchar(150))",
+      "esperado": "22001",
+      "obtenido": "22001",
+      "mensaje": "el valor es demasiado largo para el tipo character varying(150)",
+      "cumple": true
+    },
+    {
+      "tipo": "UNIQUE",
+      "nombre": "correo de usuario repetido",
+      "esperado": "23505",
+      "obtenido": "23505",
+      "mensaje": "llave duplicada viola restricción de unicidad «users_email_key»",
+      "cumple": true
+    },
+    {
+      "tipo": "FK",
+      "nombre": "orden de un usuario inexistente",
+      "esperado": "23503",
+      "obtenido": "23503",
+      "mensaje": "inserción o actualización en la tabla «orders» viola la llave foránea «orders_user_id_fkey»",
+      "cumple": true
+    },
+    {
+      "tipo": "FK",
+      "nombre": "renglón con beat inexistente",
+      "esperado": "23503",
+      "obtenido": "23503",
+      "mensaje": "inserción o actualización en la tabla «order_items» viola la llave foránea «order_items_beat_id_fkey»",
+      "cumple": true
+    },
+    {
+      "tipo": "ENUM",
+      "nombre": "estado de orden inválido",
+      "esperado": "22P02",
+      "obtenido": "22P02",
+      "mensaje": "la sintaxis de entrada no es válida para el enum order_status: «REGALADO»",
+      "cumple": true
+    },
+    {
+      "tipo": "TIPO",
+      "nombre": "id que no es UUID",
+      "esperado": "22P02",
+      "obtenido": "22P02",
+      "mensaje": "la sintaxis de entrada no es válida para tipo uuid: «abc»",
+      "cumple": true
+    }
+  ],
+  "consultas": [
+    {
+      "id": "Q1",
+      "nombre": "Beat por id (GET /beats/:id)",
+      "sql": "select * from beats where id = '3762cb11-1657-4a01-b793-312f699d4dca' and activo",
+      "ejecucion_ms": 0.117,
+      "planeacion_ms": 4.147,
+      "min_ms": 0.108,
+      "max_ms": 0.127,
+      "filas": 1,
+      "bytes": 362,
+      "indices": [
+        "beats_pkey"
+      ],
+      "nodos": [
+        "Index Scan (beats_pkey)"
+      ]
+    },
+    {
+      "id": "Q2",
+      "nombre": "Primera página del catálogo (GET /beats?limit=20)",
+      "sql": "select id, nombre, genero, bpm, precio, imagen_url, audio_url, descripcion, created_at from beats where activo order by created_at desc limit 20",
+      "ejecucion_ms": 0.11,
+      "planeacion_ms": 4.319,
+      "min_ms": 0.096,
+      "max_ms": 0.114,
+      "filas": 20,
+      "bytes": 5526,
+      "indices": [
+        "idx_beats_activo_fecha"
+      ],
+      "nodos": [
+        "Limit",
+        "Index Scan (idx_beats_activo_fecha)"
+      ]
+    },
+    {
+      "id": "Q3",
+      "nombre": "¿Ya compró estos beats? (POST /orders)",
+      "sql": "select i.beat_id from order_items i join orders o on o.id = i.order_id where i.beat_id in ('3762cb11-1657-4a01-b793-312f699d4dca') and o.user_id = 'c5973a49-14cc-48e0-b7e0-30714a4fb129' and o.status = 'COMPLETADO'",
+      "ejecucion_ms": 0.161,
+      "planeacion_ms": 7.011,
+      "min_ms": 0.148,
+      "max_ms": 0.233,
+      "filas": 1,
+      "bytes": 52,
+      "indices": [
+        "idx_orders_user_status",
+        "idx_order_items_beat"
+      ],
+      "nodos": [
+        "Hash Join",
+        "Bitmap Heap Scan",
+        "Bitmap Index Scan (idx_orders_user_status)",
+        "Hash",
+        "Bitmap Heap Scan",
+        "Bitmap Index Scan (idx_order_items_beat)"
+      ]
+    },
+    {
+      "id": "Q4",
+      "nombre": "Mis compras con sus beats (GET /orders/mis-compras)",
+      "sql": "select o.id, o.total, o.created_at, b.id as beat_id, b.nombre from orders o join order_items i on i.order_id = o.id join beats b on b.id = i.beat_id where o.user_id = '001bd94f-609e-4c65-8549-a6e7c81d884e' and o.status = 'COMPLETADO' order by o.created_at desc",
+      "ejecucion_ms": 0.434,
+      "planeacion_ms": 12.11,
+      "min_ms": 0.417,
+      "max_ms": 0.594,
+      "filas": 18,
+      "bytes": 3282,
+      "indices": [
+        "idx_orders_user",
+        "order_items_order_id_beat_id_key",
+        "beats_pkey"
+      ],
+      "nodos": [
+        "Sort",
+        "Nested Loop",
+        "Nested Loop",
+        "Bitmap Heap Scan",
+        "Bitmap Index Scan (idx_orders_user)",
+        "Index Only Scan (order_items_order_id_beat_id_key)",
+        "Index Scan (beats_pkey)"
+      ]
+    },
+    {
+      "id": "Q5",
+      "nombre": "Columnas de más: beat por id con * vs. solo lo que usa la app",
+      "sql": "select id, nombre, genero, bpm, precio, imagen_url, audio_url, descripcion from beats where id = '3762cb11-1657-4a01-b793-312f699d4dca' and activo",
+      "ejecucion_ms": 0.109,
+      "planeacion_ms": 4.226,
+      "min_ms": 0.099,
+      "max_ms": 0.119,
+      "filas": 1,
+      "bytes": 234,
+      "indices": [
+        "beats_pkey"
+      ],
+      "nodos": [
+        "Index Scan (beats_pkey)"
+      ]
+    }
+  ],
+  "concurrencia": [
+    {
+      "id": "DB-06a",
+      "nombre": "Dos UPDATE simultáneos al mismo beat (precio = precio + n)",
+      "esperado": 135,
+      "obtenido": 135,
+      "espera_sesion_b_ms": 914,
+      "cumple": true
+    },
+    {
+      "id": "DB-06b",
+      "nombre": "Dos compras simultáneas del mismo beat (ANTES: sin protección en la base)",
+      "esperado": 1,
+      "obtenido": 2,
+      "sesiones": [
+        "A: 201 compra creada",
+        "B: 201 compra creada"
+      ],
+      "cumple": false
+    },
+    {
+      "id": "DB-06b",
+      "nombre": "Dos compras simultáneas del mismo beat (DESPUÉS: con trg_compra_unica)",
+      "esperado": 1,
+      "obtenido": 1,
+      "sesiones": [
+        "A: 201 compra creada",
+        "B: 409 rechazado por la base (orden deshecha)"
+      ],
+      "cumple": true
+    }
+  ],
+  "transaccion": {
+    "con_transaccion_ordenes_que_quedan": 0,
+    "sin_transaccion_ordenes_huerfanas": 1
+  }
+}
