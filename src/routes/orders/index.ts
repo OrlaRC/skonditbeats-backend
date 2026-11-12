@@ -59,8 +59,18 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
       .in('id', beatIds)
       .eq('activo', true);
 
-    if (beatsError || !beatsData || beatsData.length === 0) {
-      return reply.code(400).send({ error: 'Beats no encontrados' });
+    // 22P02 = algún id no tiene formato de UUID: es un dato inválido, no una falla del servidor.
+    if (beatsError && beatsError.code !== '22P02') {
+      app.log.error(beatsError);
+      return reply.code(500).send({ error: 'Error al consultar los beats' });
+    }
+
+    // La petición está bien formada pero no se puede cumplir: se pidió algún beat que
+    // no existe o ya no está a la venta. Antes se cobraban solo los encontrados y los
+    // demás se descartaban sin avisar (Práctica 11, hallazgo DEF-03).
+    const pedidos = new Set(beatIds);
+    if (!beatsData || beatsData.length < pedidos.size) {
+      return reply.code(422).send({ error: 'Uno o más beats no existen o ya no están a la venta' });
     }
 
     // Verificar que no haya comprado ya alguno de estos beats
@@ -107,6 +117,7 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
 
     if (itemsError) {
       app.log.error(itemsError);
+      await deshacerOrden(app, order.id);
       return reply.code(500).send({ error: 'Error al guardar los items' });
     }
 
@@ -236,6 +247,16 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
 // ──────────────────────────────────────────────────────────────────────────────
 // Compra de un paquete: crea la orden marcada con pack_id y los items de sus beats
 // ──────────────────────────────────────────────────────────────────────────────
+/**
+ * La orden y sus renglones se guardan con dos llamadas a PostgREST (no hay una
+ * transacción que las abarque). Si los renglones fallan, se borra la orden para no
+ * dejar una compra COMPLETADA sin beats (Práctica 11, hallazgo DEF-04).
+ */
+async function deshacerOrden(app: FastifyInstance, orderId: string) {
+  const { error } = await supabase.from('orders').delete().eq('id', orderId);
+  if (error) app.log.error({ orderId, error }, 'No se pudo deshacer la orden incompleta');
+}
+
 async function ordenPorClave(clientRef: string, userId: string) {
   const { data } = await supabase
     .from('orders')
@@ -316,6 +337,7 @@ async function comprarPaquete(
 
   if (itemsError) {
     app.log.error(itemsError);
+    await deshacerOrden(app, order.id);
     return reply.code(500).send({ error: 'Error al guardar los items' });
   }
 

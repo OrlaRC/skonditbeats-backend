@@ -132,9 +132,16 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
       .select('*')
       .eq('id', request.params.id)
       .eq('activo', true)
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
+    // 22P02: el id no es un UUID, así que ese beat no puede existir → 404.
+    // Cualquier otro error es una falla del servidor y no debe disfrazarse de 404
+    // (Práctica 11, hallazgo DEF-05).
+    if (error && error.code !== '22P02') {
+      app.log.error(error);
+      return reply.code(500).send({ error: 'Error al obtener el beat' });
+    }
+    if (!data) {
       return reply.code(404).send({ error: 'Beat no encontrado' });
     }
 
