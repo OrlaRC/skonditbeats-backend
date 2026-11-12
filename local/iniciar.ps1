@@ -9,6 +9,12 @@ $api  = Split-Path -Parent $aqui
 $postgrest = Join-Path $aqui 'bin\postgrest.exe'
 if (-not (Test-Path $postgrest)) { throw 'Falta PostgREST: corre primero local\preparar.ps1' }
 
+# PostgREST carga libpq.dll del PATH. Si otra instalación (p. ej. C:\xampp\php) tiene
+# una libpq.dll distinta antes en el PATH, PostgREST se cierra al arrancar con
+# 0xC0000139 (punto de entrada no encontrado). Se antepone la de PostgreSQL 16.
+$pgBin = if ($env:PG_BIN) { $env:PG_BIN } else { 'D:\PostgreSQL\16\bin' }
+$env:PATH = "$pgBin;$env:PATH"
+
 $p1 = Start-Process $postgrest -ArgumentList (Join-Path $aqui 'postgrest.conf') -PassThru -WindowStyle Hidden
 $p2 = Start-Process node -ArgumentList (Join-Path $aqui 'gateway.mjs') -PassThru -WindowStyle Hidden
 

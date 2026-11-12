@@ -18,8 +18,11 @@ if (-not (Test-Path $postgrest)) {
   Remove-Item $zip
 }
 
-$existe = & $psql @con -At -c "select 1 from pg_database where datname = 'skondit_local'"
-if ($existe -ne '1') { & $psql @con -c 'create database skondit_local' }
+# Se recrea la base completa: schema.sql usa "create table if not exists", así que
+# sobre una base vieja NO agregaba las columnas nuevas (Práctica 11, DEF-11: faltaban
+# no_leido_admin/no_leido_cliente y GET /api/contact/no-leidos respondía 500).
+& $psql @con -c 'drop database if exists skondit_local with (force)'
+& $psql @con -c 'create database skondit_local'
 & $psql @con -d skondit_local -f (Join-Path $aqui 'schema.sql')
 & $psql @con -d skondit_local -f (Join-Path $aqui 'indices.sql')
 & $psql @con -d skondit_local -f (Join-Path $aqui 'seed.sql')

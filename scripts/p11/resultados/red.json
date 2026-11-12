@@ -1,0 +1,950 @@
+{
+  "fecha": "2026-11-12T00:59:31.703Z",
+  "entorno": {
+    "pc": "Windows_NT 10.0.26200 · 11th Gen Intel(R) Core(TM) i5-11400H @ 2.70GHz · 12 hilos · 32 GB",
+    "node": "v20.20.1",
+    "pc_wifi": "10.13.40.1",
+    "celular": {
+      "modelo": "FRL-L23",
+      "android": "10",
+      "ip": "10.13.39.141",
+      "gateway": "10.13.63.250"
+    },
+    "conexion_cel_api": "USB (adb reverse tcp:3000 → PC)",
+    "api_local": "http://127.0.0.1:3000",
+    "produccion": "https://skonditbeats-backend.vercel.app",
+    "commit_api": "de485cb",
+    "commit_app": "f99209c"
+  },
+  "ping": [
+    {
+      "origen": "Celular",
+      "destino": "Router Wi-Fi (10.13.63.250)",
+      "enviados": 20,
+      "recibidos": 20,
+      "perdida_pct": 0,
+      "min": 2.252,
+      "promedio": 4.071,
+      "max": 8.277,
+      "desv": 1.734
+    },
+    {
+      "origen": "Celular",
+      "destino": "PC con la API (10.13.40.1)",
+      "enviados": 20,
+      "recibidos": 0,
+      "perdida_pct": 100,
+      "min": null,
+      "promedio": null,
+      "max": null,
+      "desv": null
+    },
+    {
+      "origen": "Celular",
+      "destino": "Producción (Vercel) (skonditbeats-backend.vercel.app)",
+      "enviados": 20,
+      "recibidos": 20,
+      "perdida_pct": 0,
+      "min": 27.013,
+      "promedio": 29.915,
+      "max": 36.559,
+      "desv": 2.252
+    }
+  ],
+  "http": [
+    {
+      "origen": "PC",
+      "destino": "API local",
+      "ruta": "/health",
+      "solicitudes": [
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 8.86,
+          "ttfb": 8.02,
+          "dns": 0,
+          "tcp": 5.69,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 2.11,
+          "ttfb": 2.01,
+          "dns": 0,
+          "tcp": 1.48,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 1.4,
+          "ttfb": 1.17,
+          "dns": 0,
+          "tcp": 0.64,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 1.6,
+          "ttfb": 1.49,
+          "dns": 0,
+          "tcp": 0.88,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 1.53,
+          "ttfb": 1.43,
+          "dns": 0,
+          "tcp": 0.85,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 1.61,
+          "ttfb": 1.52,
+          "dns": 0,
+          "tcp": 0.77,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 1.13,
+          "ttfb": 1.06,
+          "dns": 0,
+          "tcp": 0.66,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 1.41,
+          "ttfb": 1.3,
+          "dns": 0,
+          "tcp": 0.72,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 1.86,
+          "ttfb": 1.71,
+          "dns": 0,
+          "tcp": 1.18,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 47,
+          "ms": 1.75,
+          "ttfb": 1.59,
+          "dns": 0,
+          "tcp": 1.14,
+          "tls": 0
+        }
+      ],
+      "n": 10,
+      "min": 1.13,
+      "max": 8.86,
+      "promedio": 2.33,
+      "desv": 2.19,
+      "p95": 8.86
+    },
+    {
+      "origen": "PC",
+      "destino": "API local",
+      "ruta": "/api/beats?limit=20&page=1",
+      "solicitudes": [
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 7.15,
+          "ttfb": 7.03,
+          "dns": 0,
+          "tcp": 0.84,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 6.69,
+          "ttfb": 6.56,
+          "dns": 0,
+          "tcp": 1.03,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 6.41,
+          "ttfb": 6.25,
+          "dns": 0,
+          "tcp": 0.83,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 6.46,
+          "ttfb": 6.28,
+          "dns": 0,
+          "tcp": 0.85,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 6.48,
+          "ttfb": 6.37,
+          "dns": 0,
+          "tcp": 0.89,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 5.84,
+          "ttfb": 5.76,
+          "dns": 0,
+          "tcp": 0.8,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 5.81,
+          "ttfb": 5.72,
+          "dns": 0,
+          "tcp": 0.76,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 11.21,
+          "ttfb": 11.11,
+          "dns": 0,
+          "tcp": 0.91,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 5.71,
+          "ttfb": 5.57,
+          "dns": 0,
+          "tcp": 1,
+          "tls": 0
+        },
+        {
+          "status": 200,
+          "bytes": 5634,
+          "ms": 4.75,
+          "ttfb": 4.66,
+          "dns": 0,
+          "tcp": 0.74,
+          "tls": 0
+        }
+      ],
+      "n": 10,
+      "min": 4.75,
+      "max": 11.21,
+      "promedio": 6.65,
+      "desv": 1.64,
+      "p95": 11.21
+    },
+    {
+      "origen": "Celular (FRL-L23)",
+      "destino": "API local por USB",
+      "ruta": "/api/beats?limit=20&page=1",
+      "solicitudes": [
+        {
+          "status": 200,
+          "dns": 0.18,
+          "tcp": 3.9,
+          "tls": 0,
+          "ttfb": 11.72,
+          "ms": 11.93,
+          "bytes": 5634,
+          "vBajada": 512181,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 0.08,
+          "tcp": 1.59,
+          "tls": 0,
+          "ttfb": 9.98,
+          "ms": 10.14,
+          "bytes": 5634,
+          "vBajada": 563400,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 0.08,
+          "tcp": 1.63,
+          "tls": 0,
+          "ttfb": 7.98,
+          "ms": 8.24,
+          "bytes": 5634,
+          "vBajada": 704250,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 0.08,
+          "tcp": 1.61,
+          "tls": 0,
+          "ttfb": 8.06,
+          "ms": 8.4,
+          "bytes": 5634,
+          "vBajada": 704250,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 0.08,
+          "tcp": 1.52,
+          "tls": 0,
+          "ttfb": 10.06,
+          "ms": 10.19,
+          "bytes": 5634,
+          "vBajada": 563400,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 0.07,
+          "tcp": 1.32,
+          "tls": 0,
+          "ttfb": 8.92,
+          "ms": 9.19,
+          "bytes": 5634,
+          "vBajada": 626000,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 0.09,
+          "tcp": 1.29,
+          "tls": 0,
+          "ttfb": 8.72,
+          "ms": 8.94,
+          "bytes": 5634,
+          "vBajada": 704250,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 0.07,
+          "tcp": 1.3,
+          "tls": 0,
+          "ttfb": 9.66,
+          "ms": 9.81,
+          "bytes": 5634,
+          "vBajada": 626000,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 0.13,
+          "tcp": 1.44,
+          "tls": 0,
+          "ttfb": 9.29,
+          "ms": 9.43,
+          "bytes": 5634,
+          "vBajada": 626000,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 0.07,
+          "tcp": 1.23,
+          "tls": 0,
+          "ttfb": 8.56,
+          "ms": 8.91,
+          "bytes": 5634,
+          "vBajada": 704250,
+          "subida": 0,
+          "vSubida": 0
+        }
+      ],
+      "n": 10,
+      "min": 8.24,
+      "max": 11.93,
+      "promedio": 9.52,
+      "desv": 1.02,
+      "p95": 11.93
+    },
+    {
+      "origen": "PC",
+      "destino": "Producción (Vercel + Supabase)",
+      "ruta": "/api/beats?limit=20&page=1",
+      "solicitudes": [
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 378.15,
+          "ttfb": 375.24,
+          "dns": 69.42,
+          "tcp": 30.21,
+          "tls": 104.14
+        },
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 322.65,
+          "ttfb": 320.26,
+          "dns": 1.32,
+          "tcp": 29.15,
+          "tls": 102.73
+        },
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 318.51,
+          "ttfb": 318.2,
+          "dns": 1.08,
+          "tcp": 28.28,
+          "tls": 100.58
+        },
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 282.86,
+          "ttfb": 273.61,
+          "dns": 1.28,
+          "tcp": 40.97,
+          "tls": 102.8
+        },
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 332.68,
+          "ttfb": 330.35,
+          "dns": 1.12,
+          "tcp": 36.01,
+          "tls": 154.35
+        },
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 319.53,
+          "ttfb": 317.99,
+          "dns": 1.03,
+          "tcp": 31.62,
+          "tls": 131.52
+        },
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 291.86,
+          "ttfb": 291.65,
+          "dns": 1.14,
+          "tcp": 29.23,
+          "tls": 103.65
+        },
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 334.69,
+          "ttfb": 330.75,
+          "dns": 3.64,
+          "tcp": 28.77,
+          "tls": 123.66
+        },
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 267.69,
+          "ttfb": 263.99,
+          "dns": 1.2,
+          "tcp": 32.47,
+          "tls": 103.02
+        },
+        {
+          "status": 200,
+          "bytes": 3285,
+          "ms": 324.14,
+          "ttfb": 320.28,
+          "dns": 1.19,
+          "tcp": 28.21,
+          "tls": 130.68
+        }
+      ],
+      "n": 10,
+      "min": 267.69,
+      "max": 378.15,
+      "promedio": 317.28,
+      "desv": 29.36,
+      "p95": 378.15
+    },
+    {
+      "origen": "Celular (FRL-L23)",
+      "destino": "Producción por Wi-Fi",
+      "ruta": "/api/beats?limit=20&page=1",
+      "solicitudes": [
+        {
+          "status": 200,
+          "dns": 4.43,
+          "tcp": 66.03,
+          "tls": 206.01,
+          "ttfb": 422.94,
+          "ms": 423.59,
+          "bytes": 3285,
+          "vBajada": 7765,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 7.67,
+          "tcp": 69.73,
+          "tls": 171.62,
+          "ttfb": 377.03,
+          "ms": 377.62,
+          "bytes": 3285,
+          "vBajada": 8713,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 4.24,
+          "tcp": 63.14,
+          "tls": 180.2,
+          "ttfb": 387.35,
+          "ms": 388.01,
+          "bytes": 3285,
+          "vBajada": 8466,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 3.14,
+          "tcp": 65.35,
+          "tls": 178.16,
+          "ttfb": 391.08,
+          "ms": 391.76,
+          "bytes": 3285,
+          "vBajada": 8401,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 4.19,
+          "tcp": 62.3,
+          "tls": 174.02,
+          "ttfb": 381.7,
+          "ms": 383.56,
+          "bytes": 3285,
+          "vBajada": 8577,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 4.2,
+          "tcp": 62.73,
+          "tls": 181.13,
+          "ttfb": 430.43,
+          "ms": 431.26,
+          "bytes": 3285,
+          "vBajada": 7621,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 4.22,
+          "tcp": 63.13,
+          "tls": 175.7,
+          "ttfb": 376.49,
+          "ms": 376.9,
+          "bytes": 3285,
+          "vBajada": 8736,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 3.01,
+          "tcp": 82.28,
+          "tls": 198.76,
+          "ttfb": 423,
+          "ms": 423.5,
+          "bytes": 3285,
+          "vBajada": 7765,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 4.22,
+          "tcp": 82.55,
+          "tls": 180.8,
+          "ttfb": 434.35,
+          "ms": 434.8,
+          "bytes": 3285,
+          "vBajada": 7569,
+          "subida": 0,
+          "vSubida": 0
+        },
+        {
+          "status": 200,
+          "dns": 4.2,
+          "tcp": 66.85,
+          "tls": 177.94,
+          "ttfb": 383.44,
+          "ms": 383.99,
+          "bytes": 3285,
+          "vBajada": 8577,
+          "subida": 0,
+          "vSubida": 0
+        }
+      ],
+      "n": 10,
+      "min": 376.9,
+      "max": 434.8,
+      "promedio": 401.5,
+      "desv": 22.47,
+      "p95": 434.8
+    }
+  ],
+  "transferencia": [
+    {
+      "sentido": "Descarga",
+      "origen": "PC",
+      "destino": "API local",
+      "bytes": 1345774,
+      "ms": 38.75,
+      "mbps": 277.84
+    },
+    {
+      "sentido": "Descarga",
+      "origen": "PC",
+      "destino": "API local",
+      "bytes": 1345774,
+      "ms": 38.91,
+      "mbps": 276.69
+    },
+    {
+      "sentido": "Descarga",
+      "origen": "PC",
+      "destino": "API local",
+      "bytes": 1345774,
+      "ms": 35.22,
+      "mbps": 305.68
+    },
+    {
+      "sentido": "Descarga",
+      "origen": "Celular",
+      "destino": "API local por USB",
+      "bytes": 1345774,
+      "ms": 134.2,
+      "mbps": 80.22
+    },
+    {
+      "sentido": "Descarga",
+      "origen": "Celular",
+      "destino": "API local por USB",
+      "bytes": 1345774,
+      "ms": 129.13,
+      "mbps": 83.37
+    },
+    {
+      "sentido": "Descarga",
+      "origen": "Celular",
+      "destino": "API local por USB",
+      "bytes": 1345774,
+      "ms": 134.71,
+      "mbps": 79.92
+    },
+    {
+      "sentido": "Descarga",
+      "origen": "Celular",
+      "destino": "Producción por Wi-Fi",
+      "bytes": 3265,
+      "ms": 395,
+      "mbps": 0.07
+    },
+    {
+      "sentido": "Descarga",
+      "origen": "Celular",
+      "destino": "Producción por Wi-Fi",
+      "bytes": 3265,
+      "ms": 388.09,
+      "mbps": 0.07
+    },
+    {
+      "sentido": "Descarga",
+      "origen": "Celular",
+      "destino": "Producción por Wi-Fi",
+      "bytes": 3265,
+      "ms": 439.74,
+      "mbps": 0.06
+    },
+    {
+      "sentido": "Subida",
+      "origen": "PC",
+      "destino": "Storage local",
+      "status": 0,
+      "bytes": 5242880,
+      "ms": 249.37,
+      "mbps": 168.2
+    },
+    {
+      "sentido": "Subida",
+      "origen": "PC",
+      "destino": "Storage local",
+      "status": 0,
+      "bytes": 5242880,
+      "ms": 243.85,
+      "mbps": 172
+    },
+    {
+      "sentido": "Subida",
+      "origen": "PC",
+      "destino": "Storage local",
+      "status": 0,
+      "bytes": 5242880,
+      "ms": 202.66,
+      "mbps": 206.96
+    },
+    {
+      "sentido": "Subida",
+      "origen": "Celular",
+      "destino": "Storage local por USB",
+      "status": 200,
+      "bytes": 5242880,
+      "ms": 398.89,
+      "mbps": 105.15
+    },
+    {
+      "sentido": "Subida",
+      "origen": "Celular",
+      "destino": "Storage local por USB",
+      "status": 200,
+      "bytes": 5242880,
+      "ms": 390.43,
+      "mbps": 107.43
+    },
+    {
+      "sentido": "Subida",
+      "origen": "Celular",
+      "destino": "Storage local por USB",
+      "status": 200,
+      "bytes": 5242880,
+      "ms": 378.28,
+      "mbps": 110.88
+    }
+  ],
+  "consistencia": [
+    {
+      "destino": "API local",
+      "ruta": "/health",
+      "codigos": [
+        200
+      ],
+      "cuerpos_distintos": 10,
+      "estructura": [
+        "status,ts"
+      ],
+      "bytes": [
+        47
+      ]
+    },
+    {
+      "destino": "API local",
+      "ruta": "/api/beats?limit=20&page=1",
+      "codigos": [
+        200
+      ],
+      "cuerpos_distintos": 1,
+      "estructura": [
+        "beats,generos,limit,page,total"
+      ],
+      "bytes": [
+        5634
+      ]
+    },
+    {
+      "destino": "Producción (Vercel + Supabase)",
+      "ruta": "/api/beats?limit=20&page=1",
+      "codigos": [
+        200
+      ],
+      "cuerpos_distintos": 1,
+      "estructura": [
+        "beats,generos,limit,page,total"
+      ],
+      "bytes": [
+        3285
+      ]
+    }
+  ],
+  "carga": [
+    {
+      "endpoint": "GET /api/beats?limit=20 (lectura)",
+      "usuarios": 1,
+      "solicitudes": 40,
+      "exitosas": 40,
+      "fallidas": 0,
+      "codigos": {
+        "200": 40
+      },
+      "n": 40,
+      "min": 2.43,
+      "max": 54.79,
+      "promedio": 4.43,
+      "desv": 8.09,
+      "p95": 4.8,
+      "p50": 2.91,
+      "rps": 220.4,
+      "mbps": 10.04,
+      "kb_por_respuesta": 5.56,
+      "cpu_api_pct": 17.22,
+      "ram_api_mb": 80.35,
+      "db_transacciones": 11,
+      "db_conexiones_activas_max": 1
+    },
+    {
+      "endpoint": "GET /api/beats?limit=20 (lectura)",
+      "usuarios": 5,
+      "solicitudes": 40,
+      "exitosas": 40,
+      "fallidas": 0,
+      "codigos": {
+        "200": 40
+      },
+      "n": 40,
+      "min": 4.09,
+      "max": 79.96,
+      "promedio": 12.98,
+      "desv": 17.9,
+      "p95": 54,
+      "p50": 6.03,
+      "rps": 371.49,
+      "mbps": 16.91,
+      "kb_por_respuesta": 5.56,
+      "cpu_api_pct": 72.56,
+      "ram_api_mb": 82.11,
+      "db_transacciones": 5,
+      "db_conexiones_activas_max": 1
+    },
+    {
+      "endpoint": "GET /api/beats?limit=20 (lectura)",
+      "usuarios": 10,
+      "solicitudes": 40,
+      "exitosas": 40,
+      "fallidas": 0,
+      "codigos": {
+        "200": 40
+      },
+      "n": 40,
+      "min": 5.23,
+      "max": 93.36,
+      "promedio": 24.74,
+      "desv": 25.08,
+      "p95": 69.39,
+      "p50": 11.9,
+      "rps": 394.29,
+      "mbps": 17.95,
+      "kb_por_respuesta": 5.56,
+      "cpu_api_pct": 61.61,
+      "ram_api_mb": 83.39,
+      "db_transacciones": 81,
+      "db_conexiones_activas_max": 1
+    },
+    {
+      "endpoint": "POST /api/contact (escritura)",
+      "usuarios": 1,
+      "solicitudes": 40,
+      "exitosas": 40,
+      "fallidas": 0,
+      "codigos": {
+        "201": 40
+      },
+      "n": 40,
+      "min": 4.13,
+      "max": 48.36,
+      "promedio": 7.2,
+      "desv": 7.74,
+      "p95": 18.93,
+      "p50": 4.79,
+      "rps": 137,
+      "mbps": 0.14,
+      "kb_por_respuesta": 0.13,
+      "cpu_api_pct": 16.05,
+      "ram_api_mb": 84.04,
+      "db_transacciones": 19,
+      "db_conexiones_activas_max": 1
+    },
+    {
+      "endpoint": "POST /api/contact (escritura)",
+      "usuarios": 5,
+      "solicitudes": 40,
+      "exitosas": 40,
+      "fallidas": 0,
+      "codigos": {
+        "201": 40
+      },
+      "n": 40,
+      "min": 5.34,
+      "max": 59.28,
+      "promedio": 14.96,
+      "desv": 15.26,
+      "p95": 53.54,
+      "p50": 7.44,
+      "rps": 323.68,
+      "mbps": 0.34,
+      "kb_por_respuesta": 0.13,
+      "cpu_api_pct": 101.15,
+      "ram_api_mb": 84.61,
+      "db_transacciones": 79,
+      "db_conexiones_activas_max": 1
+    },
+    {
+      "endpoint": "POST /api/contact (escritura)",
+      "usuarios": 10,
+      "solicitudes": 40,
+      "exitosas": 40,
+      "fallidas": 0,
+      "codigos": {
+        "201": 40
+      },
+      "n": 40,
+      "min": 5.24,
+      "max": 59.93,
+      "promedio": 22.63,
+      "desv": 18.43,
+      "p95": 56.34,
+      "p50": 13.01,
+      "rps": 419.38,
+      "mbps": 0.44,
+      "kb_por_respuesta": 0.13,
+      "cpu_api_pct": 81.91,
+      "ram_api_mb": 86.25,
+      "db_transacciones": 18,
+      "db_conexiones_activas_max": 1
+    }
+  ],
+  "carga_tickets_creados": 120
+}
