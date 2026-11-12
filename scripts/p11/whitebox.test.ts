@@ -358,6 +358,20 @@ describe('POST /api/auth/login y autorización', () => {
     assert.equal(escrituras('users').length + escrituras('contact_messages').length, 0);
   });
 
+  test('Google desde la app: ?app=movil viaja en state y el regreso va a skonditbeats://login', async () => {
+    const web = await pedir('GET', '/api/auth/google');
+    const movil = await pedir('GET', '/api/auth/google?app=movil');
+    assert.equal(movil.statusCode, 302);
+    assert.ok(String(movil.headers.location).includes('state=movil'));
+    assert.ok(!String(web.headers.location).includes('state='), 'la web no cambia');
+
+    const cancelMovil = await pedir('GET', '/api/auth/google/callback?error=access_denied&state=movil');
+    const cancelWeb = await pedir('GET', '/api/auth/google/callback?error=access_denied');
+    assert.equal(cancelMovil.headers.location, 'skonditbeats://login?error=google_cancelled');
+    assert.ok(String(cancelWeb.headers.location).endsWith('/login?error=google_cancelled'));
+    assert.ok(!String(cancelWeb.headers.location).startsWith('skonditbeats'));
+  });
+
   test('ruta inexistente → 404', async () => {
     const r = await pedir('GET', '/api/no-existe');
     assert.equal(r.statusCode, 404);

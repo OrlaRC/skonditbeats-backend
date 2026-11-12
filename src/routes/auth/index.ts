@@ -9,6 +9,10 @@ import type { JwtPayload }       from '../../types/index';
 import { isAdminRole }           from '../../types/index';
 import { EMAIL }                 from '../../schemas/comunes';
 
+/** Inicio de sesión con Google desde la app móvil: vuelve a skonditbeats://login?... */
+const ORIGEN_MOVIL  = 'movil';
+const REGRESO_MOVIL = 'skonditbeats:/';
+
 const MAX_INTENTOS      = 5;
 const TIEMPO_BLOQUEO_MS = 15 * 60 * 1000; // 15 minutos
 
@@ -360,22 +364,29 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
 
   // ─── GET /api/auth/google ──────────────────────────────────────────────────
-  app.get('/google', async (_request, reply) => {
+  // ?app=movil: la app Android abre esta URL en el navegador y pide que al final
+  // se regrese a ella (skonditbeats://login) en lugar de a la página web.
+  app.get<{ Querystring: { app?: string } }>('/google', async (request, reply) => {
     const url = googleClient.generateAuthUrl({
       access_type: 'offline',
       scope:       ['email', 'profile'],
-      prompt:      'select_account'
+      prompt:      'select_account',
+      ...(request.query.app === 'movil' ? { state: ORIGEN_MOVIL } : {})
     });
     return reply.redirect(url);
   });
 
 
   // ─── GET /api/auth/google/callback ────────────────────────────────────────
-  app.get<{ Querystring: { code?: string; error?: string } }>(
+  app.get<{ Querystring: { code?: string; error?: string; state?: string } }>(
     '/google/callback',
     async (request, reply) => {
-      const { code, error } = request.query;
-      const frontendUrl = process.env['FRONTEND_URL'] ?? 'http://localhost:4200';
+      const { code, error, state } = request.query;
+      // Mismo flujo para web y app; solo cambia a dónde se regresa. Nunca se manda
+      // el token en la URL: el usuario todavía debe escribir el código OTP.
+      const frontendUrl = state === ORIGEN_MOVIL
+        ? REGRESO_MOVIL
+        : (process.env['FRONTEND_URL'] ?? 'http://localhost:4200');
 
       if (error || !code) {
         return reply.redirect(`${frontendUrl}/login?error=google_cancelled`);
