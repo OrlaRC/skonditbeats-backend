@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import bcrypt                   from 'bcryptjs';
-import { supabase }             from '../../db/supabase';
+import { sql, filasONada }      from '../../db/sql';
 import { isAdminRole, isSuperAdmin, puedeGestionar, UserRole, ROLES_VALIDOS, PERMISOS_DISPONIBLES } from '../../types/index';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
@@ -47,18 +47,15 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
 
   /** Rol actual de una cuenta, o null si no existe. */
   async function rolDe(id: string): Promise<string | null> {
-    const { data } = await supabase.from('users').select('rol').eq('id', id).maybeSingle();
-    return data?.rol ?? null;
+    const [fila] = await filasONada(sql<{ rol: string }[]>`select rol from users where id = ${id}`);
+    return fila?.rol ?? null;
   }
 
   /** Cuántos super administradores activos hay (nunca debe quedar ninguno). */
   async function superAdminsActivos(): Promise<number> {
-    const { count } = await supabase
-      .from('users')
-      .select('id', { count: 'exact', head: true })
-      .eq('rol', 'SUPER_ADMIN')
-      .eq('activo', true);
-    return count ?? 0;
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*) as n from users where rol = 'SUPER_ADMIN' and activo`;
+    return n;
   }
 
   app.addHook('preHandler', app.authenticate);
@@ -70,34 +67,19 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
 
   // ─── GET /api/users ────────────────────────────────────────────────────────
   app.get('/', async (_request, reply) => {
-    const { data: users, error } = await supabase
-      .from('users')
-      .select('id, email, username, nombre, rol, permissions, foto_url, activo, fecha_registro')
-      .order('fecha_registro', { ascending: false });
-
-    if (error) {
+    try {
+      // Beats comprados por cliente (renglones de órdenes completadas) en la misma consulta.
+      const users = await sql`
+        select u.id, u.email, u.username, u.nombre, u.rol, u.permissions, u.foto_url, u.activo, u.fecha_registro,
+               (select count(*) from order_items oi join orders o on o.id = oi.order_id
+                where o.user_id = u.id and o.status = 'COMPLETADO') as beats_comprados
+        from users u
+        order by u.fecha_registro desc`;
+      return reply.send({ users });
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al obtener usuarios' });
     }
-
-    const { data: todasOrdenes } = await supabase
-      .from('orders')
-      .select('user_id, order_items(id)')
-      .eq('status', 'COMPLETADO');
-
-    const beatsPorUsuario: Record<string, number> = {};
-    for (const orden of todasOrdenes ?? []) {
-      const uid   = orden.user_id;
-      const items = Array.isArray(orden.order_items) ? orden.order_items.length : 0;
-      beatsPorUsuario[uid] = (beatsPorUsuario[uid] ?? 0) + items;
-    }
-
-    const usersConBeats = (users ?? []).map(user => ({
-      ...user,
-      beats_comprados: beatsPorUsuario[user.id] ?? 0
-    }));
-
-    return reply.send({ users: usersConBeats });
   });
 
 
@@ -139,11 +121,7 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: SOLO_SUPER });
     }
 
-    const { data: existing } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', email.toLowerCase().trim())
-      .maybeSingle();
+    const [existing] = await sql`select id from users where email = ${email.toLowerCase().trim()}`;
 
     if (existing) {
       return reply.code(409).send({ error: 'El email ya está registrado' });
@@ -151,23 +129,22 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .insert({
-        email:       email.toLowerCase().trim(),
-        password:    passwordHash,
-        nombre,
-        username:    username?.trim()  || null,
-        direccion:   direccion?.trim() || null,
-        telefono:    telefono?.trim()  || null,
-        edad:        edad ?? null,
-        rol:         rolFinal,
-        permissions: permissions ?? []
-      })
-      .select('id, email, nombre, username, rol, permissions, activo, fecha_registro')
-      .single();
-
-    if (error) {
+    let user;
+    try {
+      [user] = await sql`
+        insert into users ${sql({
+          email:       email.toLowerCase().trim(),
+          password:    passwordHash,
+          nombre,
+          username:    username?.trim()  || null,
+          direccion:   direccion?.trim() || null,
+          telefono:    telefono?.trim()  || null,
+          edad:        edad ?? null,
+          rol:         rolFinal,
+          permissions: sql.array(permissions ?? [])
+        })}
+        returning id, email, nombre, username, rol, permissions, activo, fecha_registro`;
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al crear el usuario' });
     }
@@ -186,29 +163,29 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
 
   // ─── GET /api/users/:id ────────────────────────────────────────────────────
   app.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, email, username, nombre, rol, permissions, foto_url, direccion, telefono, edad, activo, fecha_registro')
-      .eq('id', request.params.id)
-      .single();
+    const [data] = await filasONada(sql`
+      select id, email, username, nombre, rol, permissions, foto_url, direccion, telefono, edad, activo, fecha_registro
+      from users where id = ${request.params.id}`);
 
-    if (error || !data) {
+    if (!data) {
       return reply.code(404).send({ error: 'Usuario no encontrado' });
     }
 
-    const { data: compras } = await supabase
-      .from('orders')
-      .select(`
-        id, total, created_at,
-        order_items (
-          beats ( id, nombre, genero, precio, imagen_url )
-        )
-      `)
-      .eq('user_id', request.params.id)
-      .eq('status', 'COMPLETADO')
-      .order('created_at', { ascending: false });
+    // Misma forma que PostgREST: order_items: [{ beats: {...} }]
+    const compras = await sql`
+      select o.id, o.total, o.created_at,
+             coalesce((
+               select json_agg(json_build_object('beats', case when b.id is null then null else json_build_object(
+                        'id', b.id, 'nombre', b.nombre, 'genero', b.genero, 'precio', b.precio,
+                        'imagen_url', b.imagen_url) end))
+               from order_items oi left join beats b on b.id = oi.beat_id
+               where oi.order_id = o.id
+             ), '[]'::json) as order_items
+      from orders o
+      where o.user_id = ${request.params.id} and o.status = 'COMPLETADO'
+      order by o.created_at desc`;
 
-    return reply.send({ user: data, compras: compras ?? [] });
+    return reply.send({ user: data, compras });
   });
 
 
@@ -222,11 +199,8 @@ const { id } = request.params;
       return reply.code(400).send({ error: 'No puedes editar tu propia cuenta desde este módulo' });
     }
 
-    const { data: actual } = await supabase
-      .from('users')
-      .select('nombre, email, rol, activo')
-      .eq('id', id)
-      .single();
+    const [actual] = await filasONada(sql<{ nombre: string; email: string; rol: UserRole; activo: boolean }[]>`
+      select nombre, email, rol, activo from users where id = ${id}`);
 
     if (!actual) {
       return reply.code(404).send({ error: 'Usuario no encontrado' });
@@ -249,7 +223,7 @@ const { id } = request.params;
       return reply.code(400).send({ error: 'Debe quedar al menos un super administrador activo' });
     }
 
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, unknown> = { updated_at: new Date() };
     if (nombre)    patch.nombre    = nombre;
     if (username !== undefined) patch.username = username || null;
     if (direccion !== undefined) patch.direccion = direccion || null;
@@ -279,14 +253,13 @@ const { id } = request.params;
       }
     }
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .update(patch)
-      .eq('id', id)
-      .select('id, email, username, nombre, rol, permissions, foto_url, activo, fecha_registro')
-      .single();
-
-    if (error || !user) {
+    let user;
+    try {
+      [user] = await sql`
+        update users set ${sql(patch)} where id = ${id}
+        returning id, email, username, nombre, rol, permissions, foto_url, activo, fecha_registro`;
+      if (!user) throw new Error('usuario inexistente');
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al actualizar el usuario' });
     }
@@ -327,11 +300,8 @@ const { id } = request.params;
       return reply.code(400).send({ error: errorPolitica, politica: DESCRIPCION_POLITICA });
     }
 
-    const { data: target } = await supabase
-      .from('users')
-      .select('nombre, email')
-      .eq('id', request.params.id)
-      .single();
+    const [target] = await filasONada(sql<{ nombre: string; email: string }[]>`
+      select nombre, email from users where id = ${request.params.id}`);
 
     if (!target) {
       return reply.code(404).send({ error: 'Usuario no encontrado' });
@@ -339,12 +309,9 @@ const { id } = request.params;
 
     const newHash = await bcrypt.hash(password, 12);
 
-    const { error } = await supabase
-      .from('users')
-      .update({ password: newHash, updated_at: new Date().toISOString() })
-      .eq('id', request.params.id);
-
-    if (error) {
+    try {
+      await sql`update users set password = ${newHash}, updated_at = now() where id = ${request.params.id}`;
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al cambiar la contraseña' });
     }
@@ -378,11 +345,8 @@ const { id } = request.params;
       return reply.code(400).send({ error: 'Rol inválido' });
     }
 
-    const { data: target } = await supabase
-      .from('users')
-      .select('nombre, email, rol')
-      .eq('id', request.params.id)
-      .single();
+    const [target] = await filasONada(sql<{ nombre: string; email: string; rol: UserRole }[]>`
+      select nombre, email, rol from users where id = ${request.params.id}`);
 
     if (!target) {
       return reply.code(404).send({ error: 'Usuario no encontrado' });
@@ -400,14 +364,13 @@ const { id } = request.params;
       return reply.code(400).send({ error: 'Debe quedar al menos un super administrador activo' });
     }
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .update({ rol, updated_at: new Date().toISOString() })
-      .eq('id', request.params.id)
-      .select('id, email, username, nombre, rol, permissions, activo, fecha_registro')
-      .single();
-
-    if (error || !user) {
+    let user;
+    try {
+      [user] = await sql`
+        update users set rol = ${rol}, updated_at = now() where id = ${request.params.id}
+        returning id, email, username, nombre, rol, permissions, activo, fecha_registro`;
+      if (!user) throw new Error('usuario inexistente');
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al asignar el rol' });
     }
@@ -448,24 +411,20 @@ const { id } = request.params;
       return reply.code(400).send({ error: `Permisos inválidos: ${invalidos.join(', ')}` });
     }
 
-    const { data: target } = await supabase
-      .from('users')
-      .select('nombre, email')
-      .eq('id', request.params.id)
-      .single();
+    const [target] = await filasONada(sql<{ nombre: string; email: string }[]>`
+      select nombre, email from users where id = ${request.params.id}`);
 
     if (!target) {
       return reply.code(404).send({ error: 'Usuario no encontrado' });
     }
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .update({ permissions, updated_at: new Date().toISOString() })
-      .eq('id', request.params.id)
-      .select('id, email, username, nombre, rol, permissions, activo, fecha_registro')
-      .single();
-
-    if (error || !user) {
+    let user;
+    try {
+      [user] = await sql`
+        update users set permissions = ${sql.array(permissions)}, updated_at = now() where id = ${request.params.id}
+        returning id, email, username, nombre, rol, permissions, activo, fecha_registro`;
+      if (!user) throw new Error('usuario inexistente');
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al actualizar permisos' });
     }

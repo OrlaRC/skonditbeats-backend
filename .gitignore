@@ -10,3 +10,4 @@ dist/
 local/bin/
 local/storage/
 scripts/p12/resultados/_pgbench.sql
+scripts/neon/salida/

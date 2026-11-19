@@ -1,6 +1,6 @@
 import jwt from '@fastify/jwt';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { supabase } from '../db/supabase';
+import { sql } from '../db/sql';
 import type { JwtPayload } from '../types/index';
 
 export async function registerJwt(app: FastifyInstance): Promise<void> {
@@ -27,13 +27,11 @@ export async function registerJwt(app: FastifyInstance): Promise<void> {
 
       // El token dura 7 días: el rol y el estado vigentes se leen de la base,
       // para que un cambio de rol o una desactivación apliquen de inmediato.
-      const { data: cuenta, error } = await supabase
-        .from('users')
-        .select('rol, activo')
-        .eq('id', payload.sub)
-        .maybeSingle();
-
-      if (error) {
+      let cuenta: { rol: string; activo: boolean } | undefined;
+      try {
+        [cuenta] = await sql<{ rol: string; activo: boolean }[]>`
+          select rol, activo from users where id = ${payload.sub}`;
+      } catch (error) {
         app.log.error(error);
         return reply.code(503).send({ error: 'Servicio no disponible' });
       }
@@ -41,7 +39,7 @@ export async function registerJwt(app: FastifyInstance): Promise<void> {
         return reply.code(401).send({ error: 'Token inválido o expirado' });
       }
 
-      request.user = { ...payload, rol: cuenta.rol };
+      request.user = { ...payload, rol: cuenta.rol as JwtPayload['rol'] };
     }
   );
 }

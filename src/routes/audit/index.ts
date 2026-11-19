@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { supabase }             from '../../db/supabase';
+import { sql }                  from '../../db/sql';
 import { isAdminRole }          from '../../types/index';
 
 interface AuditQuery {
@@ -22,30 +22,22 @@ export async function auditRoutes(app: FastifyInstance): Promise<void> {
     const limit  = Math.min(Number(request.query.limit ?? 100), 500);
     const accion = request.query.accion;
 
-    let query = supabase
-      .from('bitacora')
-      .select('id, user_id, email, accion, detalle, ip, created_at')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (accion) {
-      query = query.eq('accion', accion);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
+    try {
+      const [registros, acciones] = await Promise.all([
+        sql`
+          select id, user_id, email, accion, detalle, ip, created_at
+          from bitacora
+          ${accion ? sql`where accion = ${accion}` : sql``}
+          order by created_at desc
+          limit ${limit}`,
+        // Acciones distintas para el filtro
+        sql<{ accion: string }[]>`select distinct accion from bitacora`,
+      ]);
+      const accionesUnicas = acciones.map(a => a.accion).sort();
+      return reply.send({ registros, acciones: accionesUnicas });
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al obtener la bitácora' });
     }
-
-    // Acciones distintas para el filtro
-    const { data: acciones } = await supabase
-      .from('bitacora')
-      .select('accion');
-
-    const accionesUnicas = [...new Set((acciones ?? []).map(a => a.accion))].sort();
-
-    return reply.send({ registros: data ?? [], acciones: accionesUnicas });
   });
 }

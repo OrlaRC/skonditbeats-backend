@@ -1,5 +1,5 @@
-import type { FastifyInstance } from 'fastify';
-import { supabase }             from '../../db/supabase';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { sql, filasONada }      from '../../db/sql';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { claveIdempotencia, esDuplicado } from '../../plugins/idempotencia';
 
@@ -11,6 +11,13 @@ interface OrderBody {
 interface ExchangeBody {
   beatOrigen: string;  // beat que estaba en el paquete
   beatNuevo:  string;  // beat por el que se intercambia
+}
+
+type BeatVenta = { id: string; nombre: string; precio: number };
+
+/** Error que se lanza dentro de la transacción para responder un código concreto. */
+class Rechazo extends Error {
+  constructor(readonly codigo: number, mensaje: string) { super(mensaje); }
 }
 
 export async function ordersRoutes(app: FastifyInstance): Promise<void> {
@@ -52,16 +59,14 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'Se requiere beats o packId' });
     }
 
-    // Obtener precios reales de la BD
-    const { data: beatsData, error: beatsError } = await supabase
-      .from('beats')
-      .select('id, nombre, precio')
-      .in('id', beatIds)
-      .eq('activo', true);
-
+    // Obtener precios reales de la BD.
     // 22P02 = algún id no tiene formato de UUID: es un dato inválido, no una falla del servidor.
-    if (beatsError && beatsError.code !== '22P02') {
-      app.log.error(beatsError);
+    let beatsData: BeatVenta[];
+    try {
+      beatsData = await filasONada(sql<BeatVenta[]>`
+        select id, nombre, precio from beats where id in ${sql(beatIds)} and activo`);
+    } catch (error) {
+      app.log.error(error);
       return reply.code(500).send({ error: 'Error al consultar los beats' });
     }
 
@@ -69,88 +74,47 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
     // no existe o ya no está a la venta. Antes se cobraban solo los encontrados y los
     // demás se descartaban sin avisar (Práctica 11, hallazgo DEF-03).
     const pedidos = new Set(beatIds);
-    if (!beatsData || beatsData.length < pedidos.size) {
+    if (beatsData.length < pedidos.size) {
       return reply.code(422).send({ error: 'Uno o más beats no existen o ya no están a la venta' });
-    }
-
-    // Verificar que no haya comprado ya alguno de estos beats
-    const { data: comprasExistentes } = await supabase
-      .from('order_items')
-      .select('beat_id, orders!inner(user_id, status)')
-      .in('beat_id', beatIds)
-      .eq('orders.user_id', userId)
-      .eq('orders.status', 'COMPLETADO');
-
-    if (comprasExistentes && comprasExistentes.length > 0) {
-      return reply.code(409).send({ error: 'Ya tienes uno o más de estos beats' });
     }
 
     const total = beatsData.reduce((sum, b) => sum + Number(b.precio), 0);
 
-    // Crear la orden
-    const { data: order, error: orderError } = await supabase
-      .from('orders')
-      .insert({ user_id: userId, total, status: 'COMPLETADO', client_ref: clientRef })
-      .select('id')
-      .single();
-
-    // Dos envíos simultáneos con la misma clave: solo uno pasa la restricción UNIQUE.
-    if (esDuplicado(orderError) && clientRef) {
-      return reply.code(200).send({ order: await ordenPorClave(clientRef, userId), repetida: true });
-    }
-
-    if (orderError || !order) {
-      app.log.error(orderError);
-      return reply.code(500).send({ error: 'Error al crear la orden' });
-    }
-
-    // Crear los items
-    const items = beatsData.map(b => ({
-      order_id:        order.id,
-      beat_id:         b.id,
-      precio_unitario: Number(b.precio)
-    }));
-
-    const { error: itemsError } = await supabase
-      .from('order_items')
-      .insert(items);
-
-    if (itemsError) {
-      await deshacerOrden(app, order.id);
-      // trg_compra_unica: otra compra simultánea del mismo beat ganó la carrera (DEF-08).
-      if (esDuplicado(itemsError)) {
-        return reply.code(409).send({ error: 'Ya tienes uno o más de estos beats' });
-      }
-      app.log.error(itemsError);
-      return reply.code(500).send({ error: 'Error al guardar los items' });
-    }
+    const orderId = await guardarOrden(app, reply, {
+      userId, clientRef, total, packId: null, beats: beatsData,
+      yaTiene: 'Ya tienes uno o más de estos beats',
+    });
+    if (!orderId) return reply;
 
     return reply.code(201).send({
-      order: { id: order.id, total, status: 'COMPLETADO', items: beatsData }
+      order: { id: orderId, total, status: 'COMPLETADO', items: beatsData }
     });
   });
 
 
   // ─── GET /api/orders/mis-compras ───────────────────────────────────────────
   app.get('/mis-compras', async (request, reply) => {
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`
-        id, total, status, created_at, pack_id,
-        order_items (
-          id, precio_unitario,
-          beats ( id, nombre, genero, bpm, imagen_url, audio_url )
-        )
-      `)
-      .eq('user_id', request.user.sub)
-      .eq('status', 'COMPLETADO')
-      .order('created_at', { ascending: false });
-
-    if (error) {
+    try {
+      // Misma forma que devolvía PostgREST: order_items: [{ id, precio_unitario, beats: {...} }]
+      const orders = await sql`
+        select o.id, o.total, o.status, o.created_at, o.pack_id,
+               coalesce((
+                 select json_agg(json_build_object(
+                          'id', oi.id, 'precio_unitario', oi.precio_unitario,
+                          'beats', case when b.id is null then null else json_build_object(
+                            'id', b.id, 'nombre', b.nombre, 'genero', b.genero, 'bpm', b.bpm,
+                            'imagen_url', b.imagen_url, 'audio_url', b.audio_url) end))
+                 from order_items oi left join beats b on b.id = oi.beat_id
+                 where oi.order_id = o.id
+               ), '[]'::json) as order_items
+        from orders o
+        where o.user_id = ${request.user.sub} and o.status = 'COMPLETADO'
+        order by o.created_at desc`;
+      return reply.send({ orders });
+    } catch (error) {
+      app.log.error(error);
       return reply.code(500).send({ error: 'Error al obtener compras' });
     }
-
-    return reply.send({ orders: data });
   });
 
 
@@ -160,7 +124,7 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
     '/:id/intercambiar',
     async (request, reply) => {
       const { id: orderId } = request.params;
-      const { beatOrigen, beatNuevo } = request.body;
+      const { beatOrigen, beatNuevo } = request.body ?? {};
       const userId = request.user.sub;
 
       if (!beatOrigen || !beatNuevo) {
@@ -168,14 +132,10 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
       }
 
       // 1) La orden debe existir, estar COMPLETADA, ser del usuario y ser de un paquete
-      const { data: order, error: orderError } = await supabase
-        .from('orders')
-        .select('id, pack_id, user_id, status')
-        .eq('id', orderId)
-        .eq('user_id', userId)
-        .single();
+      const [order] = await filasONada(sql<{ id: string; pack_id: string | null; status: string }[]>`
+        select id, pack_id, status from orders where id = ${orderId} and user_id = ${userId}`);
 
-      if (orderError || !order) {
+      if (!order) {
         return reply.code(404).send({ error: 'Orden no encontrada' });
       }
 
@@ -184,54 +144,36 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
       }
 
       // 2) El beat de origen debe ser parte del paquete
-      const { data: enPaquete } = await supabase
-        .from('pack_beats')
-        .select('beat_id')
-        .eq('pack_id', order.pack_id)
-        .eq('beat_id', beatOrigen)
-        .single();
+      const [enPaquete] = await filasONada(sql`
+        select beat_id from pack_beats where pack_id = ${order.pack_id} and beat_id = ${beatOrigen}`);
 
       if (!enPaquete) {
         return reply.code(400).send({ error: 'El beat de origen no pertenece al paquete' });
       }
 
       // 3) El beat nuevo debe existir y estar activo
-      const { data: beatNuevoData, error: beatNuevoError } = await supabase
-        .from('beats')
-        .select('id, nombre, precio')
-        .eq('id', beatNuevo)
-        .eq('activo', true)
-        .single();
+      const [beatNuevoData] = await filasONada(sql<BeatVenta[]>`
+        select id, nombre, precio from beats where id = ${beatNuevo} and activo`);
 
-      if (beatNuevoError || !beatNuevoData) {
+      if (!beatNuevoData) {
         return reply.code(404).send({ error: 'Beat nuevo no encontrado' });
       }
 
       // 4) Verificar que no haya intercambiado ya este beat en esta orden
-      const { data: yaIntercambiado } = await supabase
-        .from('pack_intercambios')
-        .select('id')
-        .eq('order_id', orderId)
-        .eq('beat_origen', beatOrigen)
-        .maybeSingle();
+      const [yaIntercambiado] = await sql`
+        select id from pack_intercambios where order_id = ${orderId} and beat_origen = ${beatOrigen}`;
 
       if (yaIntercambiado) {
         return reply.code(409).send({ error: 'Ese beat ya fue intercambiado en esta orden' });
       }
 
       // 5) Registrar el intercambio
-      const { error: exError } = await supabase
-        .from('pack_intercambios')
-        .insert({
-          user_id:     userId,
-          order_id:    orderId,
-          pack_id:     order.pack_id,
-          beat_origen: beatOrigen,
-          beat_cambia: beatNuevo
-        });
-
-      if (exError) {
-        app.log.error(exError);
+      try {
+        await sql`
+          insert into pack_intercambios (user_id, order_id, pack_id, beat_origen, beat_cambia)
+          values (${userId}, ${orderId}, ${order.pack_id}, ${beatOrigen}, ${beatNuevo})`;
+      } catch (error) {
+        app.log.error(error);
         return reply.code(500).send({ error: 'Error al registrar el intercambio' });
       }
 
@@ -249,114 +191,132 @@ export async function ordersRoutes(app: FastifyInstance): Promise<void> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Compra de un paquete: crea la orden marcada con pack_id y los items de sus beats
-// ──────────────────────────────────────────────────────────────────────────────
-/**
- * La orden y sus renglones se guardan con dos llamadas a PostgREST (no hay una
- * transacción que las abarque). Si los renglones fallan, se borra la orden para no
- * dejar una compra COMPLETADA sin beats (Práctica 11, hallazgo DEF-04).
- */
-async function deshacerOrden(app: FastifyInstance, orderId: string) {
-  const { error } = await supabase.from('orders').delete().eq('id', orderId);
-  if (error) app.log.error({ orderId, error }, 'No se pudo deshacer la orden incompleta');
-}
 
 async function ordenPorClave(clientRef: string, userId: string) {
-  const { data } = await supabase
-    .from('orders')
-    .select('id, total, status, pack_id')
-    .eq('client_ref', clientRef)
-    .eq('user_id', userId)
-    .maybeSingle();
-  return data;
+  const [orden] = await sql`
+    select id, total, status, pack_id from orders
+    where client_ref = ${clientRef} and user_id = ${userId}`;
+  return orden ?? null;
 }
 
+/**
+ * Guarda la orden COMPLETADA y sus renglones en UNA transacción. Antes eran dos
+ * llamadas a PostgREST y, si fallaban los renglones, se borraba la orden a mano
+ * (Práctica 11, hallazgo DEF-04); ahora la base deshace todo sola.
+ *
+ * Dentro de la misma transacción se revisa que el cliente no tenga ya alguno de los
+ * beats; si otra compra simultánea gana la carrera, el trigger trg_compra_unica
+ * responde 23505 y también se deshace todo (DEF-08).
+ */
+async function guardarOrden(
+  app: FastifyInstance,
+  reply: FastifyReply,
+  o: {
+    userId: string;
+    clientRef: string | null;
+    total: number;
+    packId: string | null;
+    beats: BeatVenta[];
+    yaTiene: string;
+  },
+): Promise<string | null> {
+  try {
+    const orderId = await sql.begin(async tx => {
+      const [compra] = await tx`
+        select 1 from order_items oi join orders od on od.id = oi.order_id
+        where oi.beat_id in ${tx(o.beats.map(b => b.id))}
+          and od.user_id = ${o.userId} and od.status = 'COMPLETADO'
+        limit 1`;
+      if (compra) throw new Rechazo(409, o.yaTiene);
+
+      const [order] = await tx<{ id: string }[]>`
+        insert into orders (user_id, total, status, pack_id, client_ref)
+        values (${o.userId}, ${o.total}, 'COMPLETADO', ${o.packId}, ${o.clientRef})
+        returning id`;
+
+      await tx`insert into order_items ${tx(o.beats.map(b => ({
+        order_id: order.id, beat_id: b.id, precio_unitario: Number(b.precio),
+      })))}`;
+      return order.id;
+    });
+    return orderId;
+  } catch (error) {
+    if (error instanceof Rechazo) {
+      reply.code(error.codigo).send({ error: error.message });
+      return null;
+    }
+    if (esDuplicado(error as { code?: string })) {
+      const restriccion = (error as { constraint_name?: string }).constraint_name ?? '';
+      // Dos envíos simultáneos con la misma clave: solo uno pasa la restricción UNIQUE.
+      if (o.clientRef && restriccion.includes('client_ref')) {
+        reply.code(200).send({ order: await ordenPorClave(o.clientRef, o.userId), repetida: true });
+        return null;
+      }
+      // trg_compra_unica: otra compra simultánea del mismo beat ganó la carrera (DEF-08).
+      reply.code(409).send({ error: o.yaTiene });
+      return null;
+    }
+    app.log.error(error);
+    reply.code(500).send({ error: 'Error al crear la orden' });
+    return null;
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Compra de un paquete: crea la orden marcada con pack_id y los items de sus beats
+// ──────────────────────────────────────────────────────────────────────────────
 async function comprarPaquete(
-  app:    FastifyInstance,
-  request: any,
-  reply:   any,
+  app:     FastifyInstance,
+  request: FastifyRequest,
+  reply:   FastifyReply,
   packId:  string,
   userId:  string,
   clientRef: string | null
 ) {
   // Obtener el paquete con sus beats
-  const { data: pack, error: packError } = await supabase
-    .from('packs')
-    .select(`
-      id, nombre, precio, activo,
-      pack_beats ( beats ( id, nombre, precio ) )
-    `)
-    .eq('id', packId)
-    .eq('activo', true)
-    .single();
-
-  if (packError || !pack) {
-    return reply.code(404).send({ error: 'Paquete no encontrado' });
+  let pack: { id: string; nombre: string; precio: number } | undefined;
+  let beatsDelPack: BeatVenta[] = [];
+  try {
+    [pack] = await filasONada(sql<{ id: string; nombre: string; precio: number }[]>`
+      select id, nombre, precio from packs where id = ${packId} and activo`);
+    if (pack) {
+      beatsDelPack = await sql<BeatVenta[]>`
+        select b.id, b.nombre, b.precio
+        from pack_beats pb join beats b on b.id = pb.beat_id
+        where pb.pack_id = ${pack.id}`;
+    }
+  } catch (error) {
+    app.log.error(error);
+    return reply.code(500).send({ error: 'Error al consultar el paquete' });
   }
 
-  const beatsDelPack = (pack.pack_beats ?? []).map((pb: any) => pb.beats).filter(Boolean);
+  if (!pack) {
+    return reply.code(404).send({ error: 'Paquete no encontrado' });
+  }
 
   if (beatsDelPack.length === 0) {
     return reply.code(400).send({ error: 'El paquete no tiene beats' });
   }
 
-  // Verificar que el usuario no tenga ya alguno de esos beats
-  const { data: comprasExistentes } = await supabase
-    .from('order_items')
-    .select('beat_id, orders!inner(user_id, status)')
-    .in('beat_id', beatsDelPack.map((b: any) => b.id))
-    .eq('orders.user_id', userId)
-    .eq('orders.status', 'COMPLETADO');
-
-  if (comprasExistentes && comprasExistentes.length > 0) {
-    return reply.code(409).send({ error: 'Ya tienes uno o más de los beats de este paquete' });
-  }
-
   const total = Number(pack.precio);
+  const nombre = pack.nombre;
+  const idPack = pack.id;
 
-  const { data: order, error: orderError } = await supabase
-    .from('orders')
-    .insert({ user_id: userId, total, status: 'COMPLETADO', pack_id: pack.id, client_ref: clientRef })
-    .select('id')
-    .single();
-
-  if (esDuplicado(orderError) && clientRef) {
-    return reply.code(200).send({ order: await ordenPorClave(clientRef, userId), repetida: true });
-  }
-
-  if (orderError || !order) {
-    app.log.error(orderError);
-    return reply.code(500).send({ error: 'Error al crear la orden' });
-  }
-
-  const items = beatsDelPack.map((b: any) => ({
-    order_id:        order.id,
-    beat_id:         b.id,
-    precio_unitario: Number(b.precio)
-  }));
-
-  const { error: itemsError } = await supabase
-    .from('order_items')
-    .insert(items);
-
-  if (itemsError) {
-    await deshacerOrden(app, order.id);
-    if (esDuplicado(itemsError)) {
-      return reply.code(409).send({ error: 'Ya tienes uno o más de los beats de este paquete' });
-    }
-    app.log.error(itemsError);
-    return reply.code(500).send({ error: 'Error al guardar los items' });
-  }
+  const orderId = await guardarOrden(app, reply, {
+    userId, clientRef, total, packId: idPack, beats: beatsDelPack,
+    yaTiene: 'Ya tienes uno o más de los beats de este paquete',
+  });
+  if (!orderId) return reply;
 
   await registrarAudit(app, {
     user_id: userId,
     email:   request.user.email,
     accion:  'COMPRA_PAQUETE',
-    detalle: `Compra del paquete "${pack.nombre}" ($${total})`,
+    detalle: `Compra del paquete "${nombre}" ($${total})`,
     ip:      ipDeRequest(request)
   });
 
   return reply.code(201).send({
-    order: { id: order.id, total, status: 'COMPLETADO', pack_id: pack.id, items: beatsDelPack }
+    order: { id: orderId, total, status: 'COMPLETADO', pack_id: idPack, items: beatsDelPack }
   });
 }

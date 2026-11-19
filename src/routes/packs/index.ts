@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { supabase }             from '../../db/supabase';
+import { sql, esFormatoInvalido } from '../../db/sql';
 import { isAdminRole }          from '../../types/index';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 
@@ -15,49 +15,55 @@ interface Params {
   id: string;
 }
 
+/**
+ * Paquete con sus beats, con la misma forma que devolvía PostgREST:
+ *   { ..., pack_beats: [ { beats: { id, nombre, ... } } ] }
+ */
+const consultaPacks = (filtro: ReturnType<typeof sql>) => sql`
+  select p.id, p.nombre, p.descripcion, p.imagen_url, p.precio, p.activo, p.created_at,
+         coalesce((
+           select json_agg(json_build_object('beats', json_build_object(
+                    'id', b.id, 'nombre', b.nombre, 'genero', b.genero, 'bpm', b.bpm,
+                    'precio', b.precio, 'imagen_url', b.imagen_url, 'audio_url', b.audio_url))
+                  order by b.nombre)
+           from pack_beats pb join beats b on b.id = pb.beat_id
+           where pb.pack_id = p.id
+         ), '[]'::json) as pack_beats
+  from packs p
+  ${filtro}`;
+
 export async function packRoutes(app: FastifyInstance): Promise<void> {
 
   // ─── GET /api/packs ─────────────────────────────────────────────────────────
   // Público: lista los paquetes activos con sus beats
   app.get('/', async (_request, reply) => {
-    const { data, error } = await supabase
-      .from('packs')
-      .select(`
-        id, nombre, descripcion, imagen_url, precio, activo, created_at,
-        pack_beats (
-          beats ( id, nombre, genero, bpm, precio, imagen_url, audio_url )
-        )
-      `)
-      .eq('activo', true)
-      .order('created_at', { ascending: false });
-
-    if (error) {
+    try {
+      const packs = await consultaPacks(sql`where p.activo order by p.created_at desc`);
+      return reply.send({ packs });
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al obtener los paquetes' });
     }
-
-    return reply.send({ packs: data });
   });
 
 
   // ─── GET /api/packs/:id ────────────────────────────────────────────────────
   app.get<{ Params: Params }>('/:id', async (request, reply) => {
-    const { data, error } = await supabase
-      .from('packs')
-      .select(`
-        id, nombre, descripcion, imagen_url, precio, activo, created_at,
-        pack_beats (
-          beats ( id, nombre, genero, bpm, precio, imagen_url, audio_url )
-        )
-      `)
-      .eq('id', request.params.id)
-      .single();
+    let pack;
+    try {
+      [pack] = await consultaPacks(sql`where p.id = ${request.params.id}`);
+    } catch (error) {
+      if (!esFormatoInvalido(error)) {
+        app.log.error(error);
+        return reply.code(500).send({ error: 'Error al obtener el paquete' });
+      }
+    }
 
-    if (error || !data) {
+    if (!pack) {
       return reply.code(404).send({ error: 'Paquete no encontrado' });
     }
 
-    return reply.send({ pack: data });
+    return reply.send({ pack });
   });
 
 
@@ -79,31 +85,22 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'El paquete debe incluir al menos un beat' });
     }
 
-    // Crear el paquete
-    const { data: pack, error: packError } = await supabase
-      .from('packs')
-      .insert({
-        nombre,
-        descripcion: descripcion ?? null,
-        imagen_url:  imagen_url  ?? null,
-        precio:      Number(precio)
-      })
-      .select('id')
-      .single();
-
-    if (packError || !pack) {
-      app.log.error(packError);
+    // El paquete y sus beats en una transacción: o se guarda todo o nada
+    // (antes, si fallaba el vínculo, se intentaba borrar a mano el paquete a medias).
+    let pack: { id: string };
+    try {
+      pack = await sql.begin(async tx => {
+        const [nuevo] = await tx<{ id: string }[]>`
+          insert into packs (nombre, descripcion, imagen_url, precio)
+          values (${nombre}, ${descripcion ?? null}, ${imagen_url ?? null}, ${Number(precio)})
+          returning id`;
+        await tx`
+          insert into pack_beats ${tx(beat_ids.map(beatId => ({ pack_id: nuevo.id, beat_id: beatId })))}`;
+        return nuevo;
+      });
+    } catch (error) {
+      app.log.error(error);
       return reply.code(500).send({ error: 'Error al crear el paquete' });
-    }
-
-    // Vincular los beats
-    const vinculos = beat_ids.map(beatId => ({ pack_id: pack.id, beat_id: beatId }));
-    const { error: relError } = await supabase.from('pack_beats').insert(vinculos);
-
-    if (relError) {
-      app.log.error(relError);
-      await supabase.from('packs').delete().eq('id', pack.id);
-      return reply.code(500).send({ error: 'Error al vincular los beats del paquete' });
     }
 
     await registrarAudit(app, {
@@ -136,33 +133,31 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'El paquete debe incluir al menos un beat' });
     }
 
-    const { data: pack, error } = await supabase
-      .from('packs')
-      .update({
-        nombre,
-        descripcion: descripcion ?? null,
-        imagen_url:  imagen_url  ?? null,
-        precio:      Number(precio),
-        updated_at:  new Date().toISOString()
-      })
-      .eq('id', request.params.id)
-      .select('id')
-      .single();
-
-    if (error || !pack) {
-      app.log.error(error);
-      return reply.code(404).send({ error: 'Paquete no encontrado' });
+    // Datos y beats del paquete en una transacción.
+    let pack: { id: string } | undefined;
+    try {
+      pack = await sql.begin(async tx => {
+        const [editado] = await tx<{ id: string }[]>`
+          update packs
+          set nombre = ${nombre}, descripcion = ${descripcion ?? null}, imagen_url = ${imagen_url ?? null},
+              precio = ${Number(precio)}, updated_at = now()
+          where id = ${request.params.id}
+          returning id`;
+        if (!editado) return undefined;
+        await tx`delete from pack_beats where pack_id = ${editado.id}`;
+        await tx`
+          insert into pack_beats ${tx(beat_ids.map(beatId => ({ pack_id: editado.id, beat_id: beatId })))}`;
+        return editado;
+      });
+    } catch (error) {
+      if (!esFormatoInvalido(error)) {
+        app.log.error(error);
+        return reply.code(500).send({ error: 'Error al editar el paquete' });
+      }
     }
 
-    // Reemplazar los beats del paquete
-    const { error: delError } = await supabase
-      .from('pack_beats')
-      .delete()
-      .eq('pack_id', pack.id);
-
-    if (!delError) {
-      const vinculos = beat_ids.map(beatId => ({ pack_id: pack.id, beat_id: beatId }));
-      await supabase.from('pack_beats').insert(vinculos);
+    if (!pack) {
+      return reply.code(404).send({ error: 'Paquete no encontrado' });
     }
 
     await registrarAudit(app, {
@@ -193,16 +188,17 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Acceso denegado' });
     }
 
-    const { data: pack, error } = await supabase
-      .from('packs')
-      .update({ imagen_url: request.body.imagen_url, updated_at: new Date().toISOString() })
-      .eq('id', request.params.id)
-      .select('id')
-      .maybeSingle();
-
-    if (error) {
-      app.log.error(error);
-      return reply.code(500).send({ error: 'Error al guardar la portada' });
+    let pack;
+    try {
+      [pack] = await sql`
+        update packs set imagen_url = ${request.body.imagen_url}, updated_at = now()
+        where id = ${request.params.id}
+        returning id`;
+    } catch (error) {
+      if (!esFormatoInvalido(error)) {
+        app.log.error(error);
+        return reply.code(500).send({ error: 'Error al guardar la portada' });
+      }
     }
     if (!pack) {
       return reply.code(404).send({ error: 'Paquete no encontrado' });
@@ -220,18 +216,21 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Acceso denegado' });
     }
 
-    const { data: pack } = await supabase
-      .from('packs')
-      .select('nombre')
-      .eq('id', request.params.id)
-      .single();
+    let pack: { nombre: string } | undefined;
+    try {
+      // Baja lógica: el paquete deja de mostrarse pero las compras lo siguen citando.
+      [pack] = await sql<{ nombre: string }[]>`
+        update packs set activo = false, updated_at = now()
+        where id = ${request.params.id}
+        returning nombre`;
+    } catch (error) {
+      if (!esFormatoInvalido(error)) {
+        app.log.error(error);
+        return reply.code(500).send({ error: 'Error al eliminar el paquete' });
+      }
+    }
 
-    const { error } = await supabase
-      .from('packs')
-      .update({ activo: false, updated_at: new Date().toISOString() })
-      .eq('id', request.params.id);
-
-    if (error) {
+    if (!pack) {
       return reply.code(404).send({ error: 'Paquete no encontrado' });
     }
 
@@ -239,7 +238,7 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
       user_id: request.user.sub,
       email:   request.user.email,
       accion:  'ELIMINACION_PAQUETE',
-      detalle: pack ? `Se eliminó el paquete "${pack.nombre}"` : 'Se eliminó un paquete',
+      detalle: `Se eliminó el paquete "${pack.nombre}"`,
       ip:      ipDeRequest(request)
     });
 

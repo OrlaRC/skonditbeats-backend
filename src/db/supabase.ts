@@ -1,3 +1,4 @@
+// Solo para Storage (portadas y audios, subida reanudable TUS). Los datos están en Neon: ver db/sql.ts.
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env['SUPABASE_URL'];

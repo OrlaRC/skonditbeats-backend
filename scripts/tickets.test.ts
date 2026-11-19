@@ -1,223 +1,185 @@
-// Pruebas de caja blanca de tickets, idempotencia y catálogo (Práctica 12).
-// No usan Supabase ni red: cada llamada a la base se intercepta y se responde aquí,
-// así corren en milisegundos y dan lo mismo en cualquier Wi-Fi (o sin él).
-//   node node_modules/tsx/dist/cli.cjs --test scripts/tickets.test.ts
+// Pruebas de caja blanca de tickets, idempotencia y catálogo (Práctica 12), contra una
+// base PostgreSQL real (skondit_test, ver scripts/pruebas/entorno.ts): se revisa la
+// respuesta HTTP y lo que quedó guardado.
+//   npm test
 import { after, before, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSigner } from 'fast-jwt';
+import { bd, iniciar, terminar, vaciar, usuario, ticket, beat, token, pedir } from './pruebas/entorno';
 
-const SECRETO = 'secreto-solo-para-pruebas';
-process.env['JWT_SECRET'] = SECRETO;
-process.env['SUPABASE_URL'] = 'http://supabase.invalid';
-process.env['SUPABASE_SERVICE_ROLE_KEY'] = 'llave-falsa';
-
-const CLIENTE = '11111111-1111-4111-8111-111111111111';
-const OTRO = '33333333-3333-4333-8333-333333333333';
-const ADMIN = '22222222-2222-4222-8222-222222222222';
-const TICKET = '66666666-6666-4666-8666-666666666666';
 const CLAVE = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 
-type Peticion = { url: string; method: string; body: any; headers: Record<string, string> };
-type Respuesta = { status?: number; data: unknown } | undefined;
+type U = Awaited<ReturnType<typeof usuario>>;
+let CLIENTE: U, OTRO: U, ADMIN: U;
+let TICKET: string;
 
-const peticiones: Peticion[] = [];
-/** Reglas de la prueba en curso; la primera que responde gana. */
-let reglas: ((p: Peticion) => Respuesta)[] = [];
-let ticket: Record<string, unknown>;
+before(iniciar);
+after(terminar);
 
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const p: Peticion = {
-    url: decodeURIComponent(String(input)),
-    method: init?.method ?? 'GET',
-    body: init?.body ? JSON.parse(String(init.body)) : null,
-    headers: Object.fromEntries(new Headers(init?.headers).entries()),
-  };
-  peticiones.push(p);
-
-  let r: Respuesta;
-  for (const regla of reglas) if ((r = regla(p))) break;
-  r ??= p.url.includes('select=rol')
-    ? { data: { rol: p.url.includes(ADMIN) ? 'ADMIN' : 'CLIENTE', activo: true } }
-    : p.url.includes('/storage/')
-      ? { data: { url: '/object/upload/sign/beats-audio/x.mp3?token=tok' } }
-      : p.url.includes('contact_messages')
-        ? { data: ticket }
-        : { data: { id: 'x' } };
-
-  return new Response(JSON.stringify(r.data), {
-    status: r.status ?? 200,
-    headers: { 'content-type': 'application/json', 'content-range': '0-19/137' },
-  });
-}) as typeof fetch;
-
-const DUPLICADO = { status: 409, data: { code: '23505', message: 'duplicate key value violates unique constraint' } };
-
-const token = (sub: string, rol: string) => createSigner({ key: SECRETO })({ sub, email: 'a@b.c', rol });
-
-let app: Awaited<ReturnType<typeof import('../src/app').buildApp>>;
-
-before(async () => {
-  const { buildApp } = await import('../src/app');
-  app = await buildApp();
-  await app.ready();
-});
-after(() => app.close());
-
-beforeEach(() => {
-  peticiones.length = 0;
-  reglas = [];
-  ticket = { id: TICKET, folio: 41, nombre: 'Ana', email: 'ana@b.c', user_id: CLIENTE, estado: 'ABIERTO' };
+beforeEach(async () => {
+  await vaciar();
+  CLIENTE = await usuario({ rol: 'CLIENTE' });
+  OTRO = await usuario({ rol: 'CLIENTE' });
+  ADMIN = await usuario({ rol: 'ADMIN' });
+  TICKET = (await ticket({ user_id: CLIENTE.id })).id;
 });
 
-const pedir = (
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-  url: string,
-  tk?: string,
-  payload?: object,
-  clave?: string,
-) =>
-  app.inject({
-    method,
-    url,
-    headers: { ...(tk ? { authorization: `Bearer ${tk}` } : {}), ...(clave ? { 'idempotency-key': clave } : {}) },
-    ...(payload ? { payload } : {}),
-  });
-
-const escrituras = (tabla: string, method = 'POST') =>
-  peticiones.filter((p) => p.method === method && p.url.includes(`/${tabla}`));
+const contar = async (tabla: string) => (await bd.unsafe(`select count(*)::int as n from ${tabla}`))[0].n as number;
 
 // ── Tickets ──────────────────────────────────────────────────────────────────
 
 test('un reporte de error abre un ticket de prioridad alta y devuelve su folio', async () => {
-  const res = await pedir('POST', '/api/contact', token(CLIENTE, 'CLIENTE'), {
+  const res = await pedir('POST', '/api/contact', token(CLIENTE), {
     nombre: 'Ana', email: 'ana@b.c', mensaje: 'El beat no suena al comprarlo', tipo: 'ERROR', asunto: '  No suena  ',
   }, CLAVE);
   assert.equal(res.statusCode, 201);
-  assert.equal(res.json().ticket.folio, 41);
-  const [alta] = escrituras('contact_messages');
-  assert.equal(alta.body.prioridad, 'ALTA');
-  assert.equal(alta.body.asunto, 'No suena');
-  assert.equal(alta.body.client_ref, CLAVE);
-  assert.equal(alta.body.user_id, CLIENTE);
+  const { id, folio } = res.json().ticket;
+  assert.ok(Number.isInteger(folio) && folio > 0, 'folio numérico de la secuencia');
+  const [t] = await bd`select prioridad, asunto, client_ref, user_id, tipo from contact_messages where id = ${id}`;
+  assert.equal(t.prioridad, 'ALTA');
+  assert.equal(t.asunto, 'No suena');
+  assert.equal(t.client_ref, CLAVE);
+  assert.equal(t.user_id, CLIENTE.id);
+  assert.equal(t.tipo, 'ERROR');
 });
 
 test('reintentar el mismo ticket no lo duplica: responde el original', async () => {
-  reglas = [(p) => (p.method === 'POST' && p.url.includes('contact_messages') ? DUPLICADO : undefined)];
-  const res = await pedir('POST', '/api/contact', undefined, {
-    nombre: 'Ana', email: 'ana@b.c', mensaje: 'Mensaje que se reintenta',
-  }, CLAVE);
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.json().repetida, true);
-  assert.equal(res.json().ticket.folio, 41);
-  assert.match(peticiones.at(-1)!.url, new RegExp(`client_ref=eq\\.${CLAVE}`));
+  const cuerpo = { nombre: 'Ana', email: 'ana@b.c', mensaje: 'Mensaje que se reintenta' };
+  const primero = await pedir('POST', '/api/contact', undefined, cuerpo, CLAVE);
+  const reintento = await pedir('POST', '/api/contact', undefined, cuerpo, CLAVE);
+  assert.equal(primero.statusCode, 201);
+  assert.equal(reintento.statusCode, 200);
+  assert.equal(reintento.json().repetida, true);
+  assert.equal(reintento.json().ticket.folio, primero.json().ticket.folio);
+  assert.equal(await contar(`contact_messages where client_ref = '${CLAVE}'`), 1);
 });
 
 test('una clave de idempotencia mal formada se ignora en vez de guardarse', async () => {
-  await pedir('POST', '/api/contact', undefined, { nombre: 'Ana', email: 'ana@b.c', mensaje: 'Mensaje de prueba' }, 'x; drop table');
-  assert.equal(escrituras('contact_messages')[0].body.client_ref, null);
+  const r = await pedir('POST', '/api/contact', undefined, { nombre: 'Ana', email: 'ana@b.c', mensaje: 'Mensaje de prueba' }, "x'; drop table users; --");
+  assert.equal(r.statusCode, 201);
+  const [t] = await bd`select client_ref from contact_messages where id = ${r.json().ticket.id}`;
+  assert.equal(t.client_ref, null);
+  assert.ok((await contar('users')) > 0, 'la tabla sigue ahí');
 });
 
-test('la bandeja paginada pide solo una página y el conteo de respuestas', async () => {
-  reglas = [(p) => (p.method === 'GET' && p.url.includes('contact_messages') ? { data: [ticket] } : undefined)];
-  const res = await pedir('GET', '/api/contact?limit=20&page=3&estado=ABIERTO&tipo=ERROR', token(ADMIN, 'ADMIN'));
+test('la bandeja paginada trae solo una página, filtra en la base y solo cuenta respuestas', async () => {
+  for (let i = 0; i < 45; i++) await bd`insert into contact_messages (nombre, email, mensaje, tipo, estado) values ('C', 'c@b.c', 'Mensaje de prueba', ${i % 3 ? 'MENSAJE' : 'ERROR'}, 'ABIERTO')`;
+  const errores = await contar(`contact_messages where tipo = 'ERROR' and estado = 'ABIERTO'`);
+  const res = await pedir('GET', '/api/contact?limit=5&page=2&estado=ABIERTO&tipo=ERROR', token(ADMIN));
   assert.equal(res.statusCode, 200);
-  assert.deepEqual([res.json().total, res.json().page, res.json().limit], [137, 3, 20]);
-  const consulta = peticiones.find((p) => p.url.includes('contact_messages'))!;
-  assert.match(consulta.url, /offset=40/);
-  assert.match(consulta.url, /limit=20/);
-  assert.match(consulta.url, /estado=eq\.ABIERTO/);
-  assert.match(consulta.url, /tipo=eq\.ERROR/);
-  assert.match(consulta.url, /contact_replies\(count\)/);
-  assert.ok(!consulta.url.includes('texto'), 'la lista no debe traer el texto de las respuestas');
+  const cuerpo = res.json();
+  assert.deepEqual([cuerpo.total, cuerpo.page, cuerpo.limit], [errores, 2, 5]);
+  assert.equal(cuerpo.messages.length, 5);
+  assert.ok(cuerpo.messages.every((m: any) => m.tipo === 'ERROR' && m.estado === 'ABIERTO'));
+  // Solo el conteo de respuestas, sin su texto: contact_replies: [{ count }]
+  assert.deepEqual(cuerpo.messages[0].contact_replies, [{ count: 0 }]);
 });
 
-test('sin limit la bandeja responde como antes, para la web', async () => {
-  reglas = [(p) => (p.method === 'GET' && p.url.includes('contact_messages') ? { data: [ticket] } : undefined)];
-  const res = await pedir('GET', '/api/contact', token(ADMIN, 'ADMIN'));
+test('sin limit la bandeja responde como antes (todo, con las respuestas), para la web', async () => {
+  await bd`insert into contact_replies (message_id, autor_nombre, es_admin, texto) values (${TICKET}, 'Admin', true, 'Hola')`;
+  const res = await pedir('GET', '/api/contact', token(ADMIN));
   assert.equal(res.json().page, undefined);
-  assert.match(peticiones.find((p) => p.url.includes('contact_messages'))!.url, /contact_replies\(id,autor_nombre/);
+  const t = res.json().messages.find((m: any) => m.id === TICKET);
+  assert.equal(t.contact_replies[0].texto, 'Hola');
+  assert.equal(t.contact_replies[0].autor_nombre, 'Admin');
 });
 
 test('el cliente solo ve sus tickets y no puede filtrar por admin asignado', async () => {
-  reglas = [(p) => (p.method === 'GET' && p.url.includes('contact_messages') ? { data: [] } : undefined)];
-  await pedir('GET', `/api/contact/mios?limit=10&asignado=${ADMIN}`, token(CLIENTE, 'CLIENTE'));
-  const consulta = peticiones.find((p) => p.url.includes('contact_messages'))!;
-  assert.match(consulta.url, new RegExp(`user_id=eq\\.${CLIENTE}`));
-  assert.ok(!consulta.url.includes('asignado_a=eq'));
+  const ajeno = await ticket({ user_id: OTRO.id });
+  await bd`update contact_messages set asignado_a = ${ADMIN.id} where id = ${ajeno.id}`;
+  const res = await pedir('GET', `/api/contact/mios?limit=10&asignado=${ADMIN.id}`, token(CLIENTE));
+  const ids = res.json().messages.map((m: any) => m.id);
+  assert.deepEqual(ids, [TICKET], 'el filtro asignado se ignora y nunca ve tickets ajenos');
 });
 
 test('el detalle de un ticket ajeno se responde como inexistente', async () => {
   const url = `/api/contact/${TICKET}`;
-  assert.equal((await pedir('GET', url, token(OTRO, 'CLIENTE'))).statusCode, 404);
-  assert.equal((await pedir('GET', url, token(CLIENTE, 'CLIENTE'))).statusCode, 200);
-  assert.equal((await pedir('GET', url, token(ADMIN, 'ADMIN'))).statusCode, 200);
+  assert.equal((await pedir('GET', url, token(OTRO))).statusCode, 404);
+  assert.equal((await pedir('GET', url, token(CLIENTE))).statusCode, 200);
+  assert.equal((await pedir('GET', url, token(ADMIN))).statusCode, 200);
   assert.equal((await pedir('GET', url)).statusCode, 401);
+  assert.equal((await pedir('GET', '/api/contact/no-es-uuid', token(ADMIN))).statusCode, 404);
 });
 
 test('el cliente puede cerrar su ticket pero no ponerlo en proceso', async () => {
   const url = `/api/contact/${TICKET}/estado`;
-  const tk = token(CLIENTE, 'CLIENTE');
+  const tk = token(CLIENTE);
   assert.equal((await pedir('PUT', url, tk, { estado: 'EN_PROCESO' })).statusCode, 403);
-  assert.equal(escrituras('contact_messages', 'PATCH').length, 0);
+  assert.equal((await bd`select estado from contact_messages where id = ${TICKET}`)[0].estado, 'ABIERTO');
   assert.equal((await pedir('PUT', url, tk, { estado: 'CERRADO' })).statusCode, 200);
-  assert.equal(escrituras('contact_messages', 'PATCH')[0].body.estado, 'CERRADO');
-  assert.ok(escrituras('contact_messages', 'PATCH')[0].body.cerrado_at);
-  assert.equal((await pedir('PUT', url, token(OTRO, 'CLIENTE'), { estado: 'CERRADO' })).statusCode, 404);
+  const [t] = await bd`select estado, cerrado_at from contact_messages where id = ${TICKET}`;
+  assert.equal(t.estado, 'CERRADO');
+  assert.ok(t.cerrado_at);
+  assert.equal((await pedir('PUT', url, token(OTRO), { estado: 'CERRADO' })).statusCode, 404);
   assert.equal((await pedir('PUT', url, tk, { estado: 'INVENTADO' })).statusCode, 400);
 });
 
 test('dos admins mueven el mismo ticket: el segundo recibe 409 y no pisa el cambio', async () => {
-  // El UPDATE va condicionado al estado esperado; si no coincide, no regresa fila.
-  reglas = [(p) => (p.method === 'PATCH' && p.url.includes('contact_messages') ? { data: null } : undefined)];
-  const res = await pedir('PUT', `/api/contact/${TICKET}/estado`, token(ADMIN, 'ADMIN'), { estado: 'EN_PROCESO', esperado: 'ABIERTO' });
+  // Otro admin ya lo pasó a EN_PROCESO; este todavía veía ABIERTO.
+  await bd`update contact_messages set estado = 'EN_PROCESO' where id = ${TICKET}`;
+  const res = await pedir('PUT', `/api/contact/${TICKET}/estado`, token(ADMIN), { estado: 'RESUELTO', esperado: 'ABIERTO' });
   assert.equal(res.statusCode, 409);
-  assert.match(escrituras('contact_messages', 'PATCH')[0].url, /estado=eq\.ABIERTO/);
-  assert.ok(!peticiones.some((p) => p.url.includes('bitacora')), 'un cambio que no se aplicó no va a la bitácora');
+  assert.equal((await bd`select estado from contact_messages where id = ${TICKET}`)[0].estado, 'EN_PROCESO');
+  assert.equal(await contar('bitacora'), 0, 'un cambio que no se aplicó no va a la bitácora');
+
+  const bien = await pedir('PUT', `/api/contact/${TICKET}/estado`, token(ADMIN), { estado: 'RESUELTO', esperado: 'EN_PROCESO' });
+  assert.equal(bien.statusCode, 200);
+  assert.equal(await contar(`bitacora where accion = 'ESTADO_TICKET'`), 1);
 });
 
 test('no se puede responder un ticket cerrado', async () => {
-  ticket['estado'] = 'CERRADO';
-  const res = await pedir('POST', `/api/contact/${TICKET}/respuestas`, token(CLIENTE, 'CLIENTE'), { texto: 'Sigue fallando' });
+  await bd`update contact_messages set estado = 'CERRADO' where id = ${TICKET}`;
+  const res = await pedir('POST', `/api/contact/${TICKET}/respuestas`, token(CLIENTE), { texto: 'Sigue fallando' });
   assert.equal(res.statusCode, 409);
-  assert.equal(escrituras('contact_replies').length, 0);
+  assert.equal(await contar('contact_replies'), 0);
 });
 
 test('reintentar una respuesta no la duplica ni reenvía el correo', async () => {
-  reglas = [(p) => (p.method === 'POST' && p.url.includes('contact_replies') ? DUPLICADO : undefined)];
-  const res = await pedir('POST', `/api/contact/${TICKET}/respuestas`, token(ADMIN, 'ADMIN'), { texto: 'Ya quedó' }, CLAVE);
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.json().repetida, true);
-  assert.equal(escrituras('contact_messages', 'PATCH').length, 0);
+  const url = `/api/contact/${TICKET}/respuestas`;
+  const primera = await pedir('POST', url, token(ADMIN), { texto: 'Ya quedó' }, CLAVE);
+  await bd`update contact_messages set estado = 'EN_PROCESO' where id = ${TICKET}`;
+  const reintento = await pedir('POST', url, token(ADMIN), { texto: 'Ya quedó' }, CLAVE);
+  assert.equal(primera.statusCode, 201);
+  assert.equal(reintento.statusCode, 200);
+  assert.equal(reintento.json().repetida, true);
+  assert.equal(reintento.json().correoEnviado, false);
+  assert.equal(await contar('contact_replies'), 1);
+  // La transacción del reintento se deshizo: el estado no volvió a RESPONDIDO.
+  assert.equal((await bd`select estado from contact_messages where id = ${TICKET}`)[0].estado, 'EN_PROCESO');
 });
 
 test('solo un admin cambia la prioridad', async () => {
   const url = `/api/contact/${TICKET}/prioridad`;
-  assert.equal((await pedir('PUT', url, token(CLIENTE, 'CLIENTE'), { prioridad: 'ALTA' })).statusCode, 403);
-  assert.equal((await pedir('PUT', url, token(ADMIN, 'ADMIN'), { prioridad: 'URGENTE' })).statusCode, 400);
-  assert.equal((await pedir('PUT', url, token(ADMIN, 'ADMIN'), { prioridad: 'BAJA' })).statusCode, 200);
+  assert.equal((await pedir('PUT', url, token(CLIENTE), { prioridad: 'ALTA' })).statusCode, 403);
+  assert.equal((await pedir('PUT', url, token(ADMIN), { prioridad: 'URGENTE' })).statusCode, 400);
+  assert.equal((await pedir('PUT', url, token(ADMIN), { prioridad: 'BAJA' })).statusCode, 200);
+  assert.equal((await bd`select prioridad from contact_messages where id = ${TICKET}`)[0].prioridad, 'BAJA');
 });
 
 // ── Catálogo ─────────────────────────────────────────────────────────────────
 
-test('la tienda paginada hace una sola consulta extra y la reutiliza (caché)', async () => {
-  const { invalidarCatalogo } = await import('../src/routes/beats/index');
-  invalidarCatalogo();
-  reglas = [
-    (p) => (p.url.includes('select=genero') ? { data: [{ genero: 'Trap' }, { genero: 'Rap' }, { genero: 'Trap' }] } : undefined),
-    (p) => (p.url.includes('/beats') ? { data: [{ id: 'b1' }] } : undefined),
-  ];
-  const r1 = await pedir('GET', '/api/beats?limit=20&page=2&search=dark,(x)');
-  assert.deepEqual(r1.json().generos, ['Rap', 'Trap']);
-  assert.equal(r1.json().total, 137);
-  assert.equal(peticiones.length, 2);
-  const lista = peticiones.find((p) => !p.url.includes('select=genero'))!;
-  assert.match(lista.url, /offset=20/);
-  assert.ok(!/ilike\.%dark,\(/.test(lista.url), 'la búsqueda no debe poder alterar el filtro');
+test('la tienda paginada usa la caché del resumen y la búsqueda no altera el filtro', async () => {
+  for (const [nombre, genero] of [['Dark One', 'Trap'], ['Dark, (x) Two', 'Rap']]) await beat({ nombre, genero });
+  // El tercero se da de alta por la API: eso invalida la caché que hubiera de otras pruebas.
+  const alta = await pedir('POST', '/api/beats', token(ADMIN), { nombre: 'Luz', genero: 'Trap', bpm: 90, precio: 100 });
+  assert.equal(alta.statusCode, 201);
 
-  peticiones.length = 0;
-  await pedir('GET', '/api/beats?limit=20&page=1');
-  await pedir('GET', '/api/beats?limit=20&page=1');
-  assert.equal(peticiones.length, 2, 'con la caché vigente: una consulta por petición, no tres');
+  const r1 = await pedir('GET', '/api/beats?limit=20&page=1&search=' + encodeURIComponent('dark, (x'));
+  assert.deepEqual(r1.json().generos, ['Rap', 'Trap']);
+  // Los caracteres especiales se buscan literalmente: solo coincide el que los contiene.
+  assert.deepEqual(r1.json().beats.map((b: any) => b.nombre), ['Dark, (x) Two']);
+  assert.equal(r1.json().total, 1);
+
+  // Un género nuevo agregado por fuera: con la caché vigente todavía no aparece...
+  await beat({ nombre: 'Nuevo', genero: 'Drill' });
+  const r2 = await pedir('GET', '/api/beats?limit=20&page=1');
+  assert.deepEqual(r2.json().generos, ['Rap', 'Trap'], 'con la caché vigente no se recalculan los géneros');
+  assert.equal(r2.json().total, 4, 'el total de la página sí es el actual');
+  // ...y en cuanto un admin edita el catálogo (aquí, borra un beat) se recalcula.
+  const borrar = await pedir('DELETE', `/api/beats/${alta.json().beat.id}`, token(ADMIN));
+  assert.equal(borrar.statusCode, 204);
+  const r3 = await pedir('GET', '/api/beats?limit=20&page=1');
+  assert.deepEqual(r3.json().generos, ['Drill', 'Rap', 'Trap']);
+  assert.equal(r3.json().total, 3);
 });
 
 test('validación de un beat antes de tocar la base', async () => {
@@ -230,24 +192,34 @@ test('validación de un beat antes de tocar la base', async () => {
   assert.ok(validarBeat({ ...ok, nombre: 'x' }));
   assert.ok(validarBeat({ nombre: 'Dark Trap' }));
 
-  const res = await pedir('POST', '/api/beats', token(ADMIN, 'ADMIN'), { ...ok, bpm: 999 });
+  const res = await pedir('POST', '/api/beats', token(ADMIN), { ...ok, bpm: 999 });
   assert.equal(res.statusCode, 422); // Práctica 11: valor fuera de rango = validación semántica
-  assert.equal(escrituras('beats').length, 0);
-  const sinCampos = await pedir('POST', '/api/beats', token(ADMIN, 'ADMIN'), { nombre: 'Solo nombre' });
+  assert.equal(await contar('beats'), 0);
+  const sinCampos = await pedir('POST', '/api/beats', token(ADMIN), { nombre: 'Solo nombre' });
   assert.equal(sinCampos.statusCode, 400);
+
+  const alta = await pedir('POST', '/api/beats', token(ADMIN), ok, CLAVE);
+  assert.equal(alta.statusCode, 201);
+  const repetida = await pedir('POST', '/api/beats', token(ADMIN), ok, CLAVE);
+  assert.equal(repetida.statusCode, 200);
+  assert.equal(repetida.json().beat.id, alta.json().beat.id);
+  assert.equal(await contar('beats'), 1, 'el reintento del alta no duplica el beat');
 });
 
 test('ligar el audio de un beat no toca sus demás datos', async () => {
-  const url = '/api/beats/b1/media';
-  assert.equal((await pedir('PUT', url, token(CLIENTE, 'CLIENTE'), { audio_url: 'https://x/y.mp3' })).statusCode, 403);
-  assert.equal((await pedir('PUT', url, token(ADMIN, 'ADMIN'), {})).statusCode, 400);
-  assert.equal((await pedir('PUT', url, token(ADMIN, 'ADMIN'), { audio_url: 'https://x/y.mp3' })).statusCode, 200);
-  const cambio = escrituras('beats', 'PATCH')[0].body;
-  assert.deepEqual(Object.keys(cambio).sort(), ['audio_url', 'updated_at']);
+  const b = await beat({ nombre: 'Original', precio: 300 });
+  await bd`update beats set imagen_url = 'https://x/portada.jpg' where id = ${b.id}`;
+  const url = `/api/beats/${b.id}/media`;
+  assert.equal((await pedir('PUT', url, token(CLIENTE), { audio_url: 'https://x/y.mp3' })).statusCode, 403);
+  assert.equal((await pedir('PUT', url, token(ADMIN), {})).statusCode, 400);
+  assert.equal((await pedir('PUT', url, token(ADMIN), { audio_url: 'https://x/y.mp3' })).statusCode, 200);
+  const [fila] = await bd`select nombre, precio, imagen_url, audio_url from beats where id = ${b.id}`;
+  assert.deepEqual({ ...fila }, { nombre: 'Original', precio: 300, imagen_url: 'https://x/portada.jpg', audio_url: 'https://x/y.mp3' });
+  assert.equal((await pedir('PUT', '/api/beats/no-es-uuid/media', token(ADMIN), { audio_url: 'https://x/y.mp3' })).statusCode, 404);
 });
 
 test('la URL firmada incluye los datos para la subida reanudable', async () => {
-  const res = await pedir('POST', '/api/uploads/presign', token(ADMIN, 'ADMIN'), {
+  const res = await pedir('POST', '/api/uploads/presign', token(ADMIN), {
     bucket: 'beats-audio', contentType: 'audio/mpeg', fileName: 'mi beat.mp3',
   });
   assert.equal(res.statusCode, 200);
@@ -260,26 +232,24 @@ test('la URL firmada incluye los datos para la subida reanudable', async () => {
 // ── Pagos ────────────────────────────────────────────────────────────────────
 
 test('reintentar un pago con la misma clave devuelve la orden original sin cobrar otra vez', async () => {
-  reglas = [(p) => (p.url.includes('/orders') && p.url.includes('client_ref=eq') ? { data: { id: 'o1', total: 299, status: 'COMPLETADO' } } : undefined)];
-  const res = await pedir('POST', '/api/orders', token(CLIENTE, 'CLIENTE'), { beats: ['b1'] }, CLAVE);
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.json().repetida, true);
-  assert.equal(res.json().order.id, 'o1');
-  assert.equal(escrituras('orders').length, 0);
-  assert.equal(escrituras('order_items').length, 0);
+  const b = await beat({ precio: 299 });
+  const primero = await pedir('POST', '/api/orders', token(CLIENTE), { beats: [b.id] }, CLAVE);
+  const reintento = await pedir('POST', '/api/orders', token(CLIENTE), { beats: [b.id] }, CLAVE);
+  assert.equal(primero.statusCode, 201);
+  assert.equal(reintento.statusCode, 200);
+  assert.equal(reintento.json().repetida, true);
+  assert.equal(reintento.json().order.id, primero.json().order.id);
+  assert.equal(await contar('orders'), 1);
+  assert.equal(await contar('order_items'), 1);
 });
 
 test('dos pagos simultáneos con la misma clave: el que pierde la carrera recibe la misma orden', async () => {
-  let consultas = 0;
-  reglas = [
-    (p) => (p.method === 'POST' && p.url.includes('/orders') ? DUPLICADO : undefined),
-    // La primera búsqueda por clave aún no ve la orden; la segunda sí.
-    (p) => (p.url.includes('client_ref=eq') ? { data: consultas++ === 0 ? null : { id: 'o1', total: 299 } } : undefined),
-    (p) => (p.url.includes('order_items') ? { data: [] } : undefined),
-    (p) => (p.url.includes('/beats') ? { data: [{ id: 'b1', nombre: 'Beat', precio: 299 }] } : undefined),
-  ];
-  const res = await pedir('POST', '/api/orders', token(CLIENTE, 'CLIENTE'), { beats: ['b1'] }, CLAVE);
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.json().order.id, 'o1');
-  assert.equal(escrituras('order_items').length, 0);
+  const b = await beat({ precio: 299 });
+  const pagar = () => pedir('POST', '/api/orders', token(CLIENTE), { beats: [b.id] }, CLAVE);
+  const [r1, r2] = await Promise.all([pagar(), pagar()]);
+  const codigos = [r1.statusCode, r2.statusCode].sort();
+  assert.deepEqual(codigos, [200, 201]);
+  assert.equal(r1.json().order.id, r2.json().order.id);
+  assert.equal(await contar('orders'), 1, 'una sola orden');
+  assert.equal(await contar('order_items'), 1, 'un solo cobro del beat');
 });

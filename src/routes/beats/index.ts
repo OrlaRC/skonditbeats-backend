@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { supabase }      from '../../db/supabase';
+import { sql, esFormatoInvalido } from '../../db/sql';
 import { isAdminRole }   from '../../types/index';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { claveIdempotencia, esDuplicado } from '../../plugins/idempotencia';
@@ -30,7 +30,7 @@ interface MediaBody {
   audio_url?:  string;
 }
 
-const CAMPOS_LISTA = 'id, nombre, genero, bpm, precio, imagen_url, audio_url, descripcion, created_at';
+const CAMPOS_LISTA = ['id', 'nombre', 'genero', 'bpm', 'precio', 'imagen_url', 'audio_url', 'descripcion', 'created_at'];
 const LIMITE_MAX = 100;
 
 // ── Resumen del catálogo en memoria ───────────────────────────────────────────
@@ -46,9 +46,8 @@ async function resumenCatalogo(): Promise<{ total: number; generos: string[] }> 
   // Varias peticiones simultáneas con la caché vencida comparten una sola consulta.
   resumenEnCurso ??= (async () => {
     try {
-      const { data } = await supabase.from('beats').select('genero').eq('activo', true);
-      const filas = data ?? [];
-      const generos = [...new Set(filas.map(b => b.genero as string))].sort();
+      const filas = await sql<{ genero: string }[]>`select genero from beats where activo`;
+      const generos = [...new Set(filas.map(b => b.genero))].sort();
       resumen = { total: filas.length, generos, expira: Date.now() + TTL_RESUMEN_MS };
       return resumen;
     } finally {
@@ -98,39 +97,42 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
     const limit    = Math.min(Math.max(Number(request.query.limit) || 20, 1), LIMITE_MAX);
     const page     = Math.max(Number(request.query.page) || 1, 1);
 
-    let query = paginado
-      ? supabase.from('beats').select(CAMPOS_LISTA, { count: 'exact' })
-      : supabase.from('beats').select(CAMPOS_LISTA);
-
-    query = query.eq('activo', true).order('created_at', { ascending: false });
-
-    if (search) {
-      // Se descartan los caracteres con significado en el filtro de PostgREST.
-      const texto = search.replace(/[,()%*\\]/g, ' ').trim();
-      if (texto) query = query.or(`nombre.ilike.%${texto}%,genero.ilike.%${texto}%`);
+    // Filtros como fragmentos parametrizados: el texto del usuario nunca forma parte
+    // del SQL. En la búsqueda solo se escapan los comodines de LIKE (% _ \\).
+    const filtros = [sql`activo`];
+    const texto = search?.trim();
+    if (texto) {
+      const patron = `%${texto.replace(/[\\%_]/g, '\\$&')}%`;
+      filtros.push(sql`(nombre ilike ${patron} or genero ilike ${patron})`);
     }
-    if (genero)     query = query.eq('genero', genero);
-    if (bpm_min)    query = query.gte('bpm', Number(bpm_min));
-    if (bpm_max)    query = query.lte('bpm', Number(bpm_max));
-    if (precio_min) query = query.gte('precio', Number(precio_min));
-    if (precio_max) query = query.lte('precio', Number(precio_max));
-    if (paginado)   query = query.range((page - 1) * limit, page * limit - 1);
+    const numero = (v?: string) => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+    if (genero)                     filtros.push(sql`genero = ${genero}`);
+    if (numero(bpm_min) !== null)    filtros.push(sql`bpm >= ${numero(bpm_min)}`);
+    if (numero(bpm_max) !== null)    filtros.push(sql`bpm <= ${numero(bpm_max)}`);
+    if (numero(precio_min) !== null) filtros.push(sql`precio >= ${numero(precio_min)}`);
+    if (numero(precio_max) !== null) filtros.push(sql`precio <= ${numero(precio_max)}`);
+    const donde = filtros.reduce((a, f) => sql`${a} and ${f}`);
 
-    const [beatsResult, catalogo] = await Promise.all([query, resumenCatalogo()]);
+    try {
+      const [beats, conteo, catalogo] = await Promise.all([
+        sql`
+          select ${sql(CAMPOS_LISTA)} from beats where ${donde}
+          order by created_at desc
+          ${paginado ? sql`limit ${limit} offset ${(page - 1) * limit}` : sql``}`,
+        paginado ? sql<{ n: number }[]>`select count(*) as n from beats where ${donde}` : Promise.resolve(null),
+        resumenCatalogo(),
+      ]);
 
-    const { data, error, count } = beatsResult;
-
-    if (error) {
+      return reply.send({
+        beats,
+        total:   conteo ? conteo[0].n : catalogo.total,
+        generos: catalogo.generos,
+        ...(paginado ? { page, limit } : {})
+      });
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al obtener los beats' });
     }
-
-    return reply.send({
-      beats:   data,
-      total:   paginado ? (count ?? data.length) : catalogo.total,
-      generos: catalogo.generos,
-      ...(paginado ? { page, limit } : {})
-    });
   });
 
 
@@ -138,19 +140,18 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
     // Mismas columnas que la lista: con '*' viajaban también activo, client_ref y
     // updated_at, que ningún cliente usa (Práctica 11, DEF-09: 362 → 234 bytes).
-    const { data, error } = await supabase
-      .from('beats')
-      .select(CAMPOS_LISTA)
-      .eq('id', request.params.id)
-      .eq('activo', true)
-      .maybeSingle();
-
-    // 22P02: el id no es un UUID, así que ese beat no puede existir → 404.
-    // Cualquier otro error es una falla del servidor y no debe disfrazarse de 404
-    // (Práctica 11, hallazgo DEF-05).
-    if (error && error.code !== '22P02') {
-      app.log.error(error);
-      return reply.code(500).send({ error: 'Error al obtener el beat' });
+    let data;
+    try {
+      [data] = await sql`
+        select ${sql(CAMPOS_LISTA)} from beats where id = ${request.params.id} and activo`;
+    } catch (error) {
+      // 22P02: el id no es un UUID, así que ese beat no puede existir → 404.
+      // Cualquier otro error es una falla del servidor y no debe disfrazarse de 404
+      // (Práctica 11, hallazgo DEF-05).
+      if (!esFormatoInvalido(error)) {
+        app.log.error(error);
+        return reply.code(500).send({ error: 'Error al obtener el beat' });
+      }
     }
     if (!data) {
       return reply.code(404).send({ error: 'Beat no encontrado' });
@@ -176,32 +177,26 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
     const { nombre, genero, bpm, precio, descripcion, imagen_url, audio_url } = request.body;
     const clientRef = claveIdempotencia(request);
 
-    const { data: beat, error } = await supabase
-      .from('beats')
-      .insert({
-        nombre:      nombre.trim(),
-        genero:      genero.trim(),
-        bpm:         Number(bpm),
-        precio:      Number(precio),
-        descripcion: descripcion?.trim() || null,
-        imagen_url:  imagen_url  ?? null,
-        audio_url:   audio_url   ?? null,
-        client_ref:  clientRef
-      })
-      .select()
-      .single();
-
-    // Reintento de la misma alta: se devuelve el beat que ya se había creado.
-    if (esDuplicado(error) && clientRef) {
-      const { data: existente } = await supabase
-        .from('beats')
-        .select()
-        .eq('client_ref', clientRef)
-        .maybeSingle();
-      return reply.code(200).send({ beat: existente, repetida: true });
-    }
-
-    if (error) {
+    let beat;
+    try {
+      [beat] = await sql`
+        insert into beats ${sql({
+          nombre:      nombre.trim(),
+          genero:      genero.trim(),
+          bpm:         Number(bpm),
+          precio:      Number(precio),
+          descripcion: descripcion?.trim() || null,
+          imagen_url:  imagen_url  ?? null,
+          audio_url:   audio_url   ?? null,
+          client_ref:  clientRef
+        })}
+        returning *`;
+    } catch (error) {
+      // Reintento de la misma alta: se devuelve el beat que ya se había creado.
+      if (esDuplicado(error as { code?: string }) && clientRef) {
+        const [existente] = await sql`select * from beats where client_ref = ${clientRef}`;
+        return reply.code(200).send({ beat: existente ?? null, repetida: true });
+      }
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al guardar el beat' });
     }
@@ -243,20 +238,21 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'Envía imagen_url o audio_url' });
     }
 
-    const { data: beat, error } = await supabase
-      .from('beats')
-      .update({
-        ...(imagen_url ? { imagen_url } : {}),
-        ...(audio_url  ? { audio_url }  : {}),
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', request.params.id)
-      .select()
-      .maybeSingle();
-
-    if (error) {
-      app.log.error(error);
-      return reply.code(500).send({ error: 'Error al guardar el archivo del beat' });
+    let beat;
+    try {
+      [beat] = await sql`
+        update beats set ${sql({
+          ...(imagen_url ? { imagen_url } : {}),
+          ...(audio_url  ? { audio_url }  : {}),
+          updated_at: new Date()
+        })}
+        where id = ${request.params.id}
+        returning *`;
+    } catch (error) {
+      if (!esFormatoInvalido(error)) {
+        app.log.error(error);
+        return reply.code(500).send({ error: 'Error al guardar el archivo del beat' });
+      }
     }
     if (!beat) {
       return reply.code(404).send({ error: 'Beat no encontrado' });
@@ -280,32 +276,32 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(codigoValidacion(invalido)).send({ error: invalido });
     }
 
-    const { data: beatActual } = await supabase
-      .from('beats')
-      .select('imagen_url, audio_url')
-      .eq('id', request.params.id)
-      .single();
-
     const { nombre, genero, bpm, precio, descripcion, imagen_url, audio_url } = request.body;
 
-    const { data: beat, error } = await supabase
-      .from('beats')
-      .update({
-        nombre:      nombre.trim(),
-        genero:      genero.trim(),
-        bpm:         Number(bpm),
-        precio:      Number(precio),
-        descripcion: descripcion?.trim() || null,
-        imagen_url:  imagen_url  ?? beatActual?.imagen_url ?? null,
-        audio_url:   audio_url   ?? beatActual?.audio_url  ?? null,
-        updated_at:  new Date().toISOString()
-      })
-      .eq('id', request.params.id)
-      .select()
-      .single();
+    // Si no llega imagen o audio se conserva el que ya tenía (coalesce en la base,
+    // sin la lectura previa que antes hacía otra ida y vuelta).
+    let beat;
+    try {
+      [beat] = await sql`
+        update beats set
+          nombre      = ${nombre.trim()},
+          genero      = ${genero.trim()},
+          bpm         = ${Number(bpm)},
+          precio      = ${Number(precio)},
+          descripcion = ${descripcion?.trim() || null},
+          imagen_url  = coalesce(${imagen_url ?? null}, imagen_url),
+          audio_url   = coalesce(${audio_url ?? null}, audio_url),
+          updated_at  = now()
+        where id = ${request.params.id}
+        returning *`;
+    } catch (error) {
+      if (!esFormatoInvalido(error)) {
+        app.log.error(error);
+        return reply.code(500).send({ error: 'Error al editar el beat' });
+      }
+    }
 
-    if (error || !beat) {
-      app.log.error(error);
+    if (!beat) {
       return reply.code(404).send({ error: 'Beat no encontrado' });
     }
 
@@ -331,14 +327,20 @@ export async function beatsRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Acceso denegado' });
     }
 
-    const { data: beat, error } = await supabase
-      .from('beats')
-      .update({ activo: false, updated_at: new Date().toISOString() })
-      .eq('id', request.params.id)
-      .select('nombre')
-      .maybeSingle();
+    let beat: { nombre: string } | undefined;
+    try {
+      [beat] = await sql<{ nombre: string }[]>`
+        update beats set activo = false, updated_at = now()
+        where id = ${request.params.id}
+        returning nombre`;
+    } catch (error) {
+      if (!esFormatoInvalido(error)) {
+        app.log.error(error);
+        return reply.code(500).send({ error: 'Error al eliminar el beat' });
+      }
+    }
 
-    if (error || !beat) {
+    if (!beat) {
       return reply.code(404).send({ error: 'Beat no encontrado' });
     }
 

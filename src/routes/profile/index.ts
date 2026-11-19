@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import bcrypt                   from 'bcryptjs';
-import { supabase }             from '../../db/supabase';
+import { sql, definidos }       from '../../db/sql';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
 
@@ -17,19 +17,18 @@ interface ChangePasswordBody {
   password_nueva:  string;
 }
 
+const CAMPOS_PERFIL = ['id', 'email', 'nombre', 'username', 'rol', 'foto_url', 'direccion', 'telefono', 'edad', 'fecha_registro'];
+
 export async function profileRoutes(app: FastifyInstance): Promise<void> {
 
   app.addHook('preHandler', app.authenticate);
 
   // ─── GET /api/profile ──────────────────────────────────────────────────────
   app.get('/', async (request, reply) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, email, nombre, username, rol, foto_url, direccion, telefono, edad, fecha_registro')
-      .eq('id', request.user.sub)
-      .single();
+    const [data] = await sql`
+      select ${sql(CAMPOS_PERFIL)} from users where id = ${request.user.sub}`;
 
-    if (error || !data) {
+    if (!data) {
       return reply.code(404).send({ error: 'Perfil no encontrado' });
     }
 
@@ -55,19 +54,17 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
     // Solo estos campos: el cuerpo nunca debe poder cambiar rol, activo o password.
     const { nombre, username, direccion, telefono, edad } = request.body;
 
-    const { data, error } = await supabase
-      .from('users')
-      .update({ nombre, username, direccion, telefono, edad, updated_at: new Date().toISOString() })
-      .eq('id', request.user.sub)
-      .select('id, email, nombre, username, rol, foto_url, direccion, telefono, edad, fecha_registro')
-      .single();
-
-    if (error || !data) {
+    try {
+      const cambios = definidos({ nombre, username, direccion, telefono, edad, updated_at: new Date() });
+      const [data] = await sql`
+        update users set ${sql(cambios)} where id = ${request.user.sub}
+        returning ${sql(CAMPOS_PERFIL)}`;
+      if (!data) throw new Error('perfil inexistente');
+      return reply.send({ user: data });
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al actualizar el perfil' });
     }
-
-    return reply.send({ user: data });
   });
 
 
@@ -91,13 +88,10 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: errorPolitica, politica: DESCRIPCION_POLITICA });
     }
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('password')
-      .eq('id', request.user.sub)
-      .single();
+    const [user] = await sql<{ password: string }[]>`
+      select password from users where id = ${request.user.sub}`;
 
-    if (error || !user) {
+    if (!user) {
       return reply.code(404).send({ error: 'Usuario no encontrado' });
     }
 
@@ -109,10 +103,7 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
 
     const newHash = await bcrypt.hash(password_nueva, 12);
 
-    await supabase
-      .from('users')
-      .update({ password: newHash, updated_at: new Date().toISOString() })
-      .eq('id', request.user.sub);
+    await sql`update users set password = ${newHash}, updated_at = now() where id = ${request.user.sub}`;
 
     await registrarAudit(app, {
       user_id: request.user.sub,
@@ -135,13 +126,10 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'foto_url es obligatoria' });
     }
 
-    const { error: updateError } = await supabase
-      .from('users')
-      .update({ foto_url, updated_at: new Date().toISOString() })
-      .eq('id', request.user.sub);
-
-    if (updateError) {
-      app.log.error(updateError);
+    try {
+      await sql`update users set foto_url = ${foto_url}, updated_at = now() where id = ${request.user.sub}`;
+    } catch (error) {
+      app.log.error(error);
       return reply.code(500).send({ error: 'Error al guardar la foto' });
     }
 

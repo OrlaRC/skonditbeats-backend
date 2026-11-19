@@ -8,18 +8,15 @@
 //   node --env-file=.env scripts/reset-password.mjs correo@x.com NuevaClave1!  -> cambia la contraseña
 
 import bcrypt from 'bcryptjs';
-import { createClient } from '@supabase/supabase-js';
+import postgres from 'postgres';
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const local = /@(127\.0\.0\.1|localhost)[:/]/.test(process.env.DATABASE_URL ?? '');
+const sql = postgres(process.env.DATABASE_URL, { ssl: local ? false : 'require', prepare: false, max: 1 });
 const [email, password] = process.argv.slice(2);
 
 if (!email) {
-  const { data, error } = await supabase
-    .from('users')
-    .select('email, nombre, rol, activo')
-    .order('rol');
-  if (error) throw error;
-  console.table(data);
+  console.table(await sql`select email, nombre, rol, activo from users order by rol`);
+  await sql.end();
   process.exit(0);
 }
 
@@ -37,17 +34,13 @@ if (faltan.length) {
   process.exit(1);
 }
 
-const { data, error } = await supabase
-  .from('users')
-  .update({
-    password: await bcrypt.hash(password, 12),
-    intentos_fallidos: 0,
-    bloqueado_hasta: null,
-  })
-  .eq('email', email.toLowerCase().trim())
-  .select('email, nombre, rol');
+const data = await sql`
+  update users
+  set password = ${await bcrypt.hash(password, 12)}, intentos_fallidos = 0, bloqueado_hasta = null, updated_at = now()
+  where email = ${email.toLowerCase().trim()}
+  returning email, nombre, rol`;
+await sql.end();
 
-if (error) throw error;
 if (!data.length) {
   console.error(`No existe un usuario con el correo ${email}`);
   process.exit(1);

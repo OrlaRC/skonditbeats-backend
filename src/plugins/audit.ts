@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { supabase } from '../db/supabase';
+import { sql } from '../db/sql';
 
 export interface AuditEntry {
   user_id: string | null;
@@ -13,17 +13,11 @@ export async function registrarAudit(
   app:     FastifyInstance,
   entry:   AuditEntry
 ): Promise<void> {
-  const { error } = await supabase
-    .from('bitacora')
-    .insert({
-      user_id:    entry.user_id,
-      email:      entry.email,
-      accion:     entry.accion,
-      detalle:    entry.detalle,
-      ip:         entry.ip
-    });
-
-  if (error) {
+  try {
+    await sql`
+      insert into bitacora (user_id, email, accion, detalle, ip)
+      values (${entry.user_id}, ${entry.email}, ${entry.accion}, ${entry.detalle}, ${entry.ip})`;
+  } catch (error) {
     app.log.error(error, 'No se pudo registrar en bitácora');
   }
 }

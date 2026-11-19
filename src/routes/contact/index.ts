@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { supabase }             from '../../db/supabase';
+import { sql, filasONada }      from '../../db/sql';
 import { isAdminRole }          from '../../types/index';
 import type { JwtPayload }      from '../../types/index';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
@@ -33,16 +33,25 @@ type EstadoTicket = (typeof ESTADOS_TICKET)[number];
 const ESTADOS_ADMIN: EstadoTicket[]   = ['ABIERTO', 'EN_PROCESO', 'RESUELTO', 'CERRADO'];
 const ESTADOS_CLIENTE: EstadoTicket[] = ['ABIERTO', 'CERRADO'];
 
-const BASE = `id, folio, asunto, nombre, email, mensaje, tipo, estado, prioridad, user_id, asignado_a,
-  created_at, updated_at, cerrado_at, no_leido_cliente, no_leido_admin,
-  asignado:users!contact_messages_asignado_a_fkey ( nombre )`;
+// Columnas del ticket con la misma forma JSON que devolvía PostgREST:
+//   asignado: { nombre } | null
+const BASE = () => sql`
+  m.id, m.folio, m.asunto, m.nombre, m.email, m.mensaje, m.tipo, m.estado, m.prioridad, m.user_id, m.asignado_a,
+  m.created_at, m.updated_at, m.cerrado_at, m.no_leido_cliente, m.no_leido_admin,
+  (select json_build_object('nombre', a.nombre) from users a where a.id = m.asignado_a) as asignado`;
 
-// Detalle: el ticket con toda su conversación.
-const CAMPOS = `${BASE},
-  contact_replies ( id, autor_nombre, es_admin, texto, created_at )`;
+// Detalle: el ticket con toda su conversación (contact_replies: [{ id, autor_nombre, ... }]).
+const CAMPOS = () => sql`${BASE()},
+  coalesce((
+    select json_agg(json_build_object('id', r.id, 'autor_nombre', r.autor_nombre, 'es_admin', r.es_admin,
+                                      'texto', r.texto, 'created_at', r.created_at) order by r.created_at)
+    from contact_replies r where r.message_id = m.id
+  ), '[]'::json) as contact_replies`;
 
-// Bandeja paginada: solo cuántas respuestas hay, no su texto.
-const CAMPOS_LISTA = `${BASE}, contact_replies ( count )`;
+// Bandeja paginada: solo cuántas respuestas hay, no su texto (contact_replies: [{ count }]).
+const CAMPOS_LISTA = () => sql`${BASE()},
+  json_build_array(json_build_object('count', (select count(*) from contact_replies r where r.message_id = m.id)))
+    as contact_replies`;
 
 const LIMITE_MAX = 100;
 
@@ -84,32 +93,26 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       // Sin sesión: mensaje anónimo.
     }
 
-    const { data: ticket, error } = await supabase
-      .from('contact_messages')
-      .insert({
-        nombre,
-        email,
-        mensaje,
-        tipo:       tipo ?? 'MENSAJE',
-        asunto:     asunto?.trim() || null,
-        prioridad:  tipo === 'ERROR' ? 'ALTA' : 'MEDIA',
-        user_id:    userId,
-        client_ref: clientRef
-      })
-      .select('id, folio, estado')
-      .single();
-
-    // Reintento de la misma operación: se devuelve el ticket que ya se había creado.
-    if (esDuplicado(error) && clientRef) {
-      const { data: existente } = await supabase
-        .from('contact_messages')
-        .select('id, folio, estado')
-        .eq('client_ref', clientRef)
-        .maybeSingle();
-      return reply.code(200).send({ message: 'Mensaje recibido correctamente', ticket: existente, repetida: true });
-    }
-
-    if (error) {
+    let ticket;
+    try {
+      [ticket] = await sql`
+        insert into contact_messages ${sql({
+          nombre,
+          email,
+          mensaje,
+          tipo:       tipo ?? 'MENSAJE',
+          asunto:     asunto?.trim() || null,
+          prioridad:  tipo === 'ERROR' ? 'ALTA' : 'MEDIA',
+          user_id:    userId,
+          client_ref: clientRef
+        })}
+        returning id, folio, estado`;
+    } catch (error) {
+      // Reintento de la misma operación: se devuelve el ticket que ya se había creado.
+      if (esDuplicado(error as { code?: string }) && clientRef) {
+        const [existente] = await sql`select id, folio, estado from contact_messages where client_ref = ${clientRef}`;
+        return reply.code(200).send({ message: 'Mensaje recibido correctamente', ticket: existente ?? null, repetida: true });
+      }
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al enviar el mensaje' });
     }
@@ -125,42 +128,53 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     const limit    = Math.min(Math.max(Number(query.limit) || 20, 1), LIMITE_MAX);
     const page     = Math.max(Number(query.page) || 1, 1);
 
-    let consulta = paginado
-      ? supabase.from('contact_messages').select(CAMPOS_LISTA, { count: 'exact' })
-      : supabase.from('contact_messages').select(CAMPOS);
-
-    consulta = consulta.order('created_at', { ascending: false });
-
-    if (userId) consulta = consulta.eq('user_id', userId);
+    // Filtros como fragmentos parametrizados (el texto del usuario nunca forma parte del SQL).
+    const filtros = [sql`true`];
+    if (userId) filtros.push(sql`m.user_id = ${userId}`);
     if (query.estado && (ESTADOS_TICKET as readonly string[]).includes(query.estado)) {
-      consulta = consulta.eq('estado', query.estado);
+      filtros.push(sql`m.estado = ${query.estado}`);
     }
-    if (query.tipo === 'ERROR' || query.tipo === 'MENSAJE') consulta = consulta.eq('tipo', query.tipo);
-    if (query.asignado) consulta = consulta.eq('asignado_a', query.asignado);
+    if (query.tipo === 'ERROR' || query.tipo === 'MENSAJE') filtros.push(sql`m.tipo = ${query.tipo}`);
+    if (query.asignado) filtros.push(sql`m.asignado_a::text = ${query.asignado}`);
     // Solo con novedades: para el admin, las de los clientes; para el cliente, las del admin.
-    if (query.no_leidos === '1') consulta = consulta.eq(userId ? 'no_leido_cliente' : 'no_leido_admin', true);
+    if (query.no_leidos === '1') filtros.push(userId ? sql`m.no_leido_cliente` : sql`m.no_leido_admin`);
     if (query.q) {
       const folio = Number(query.q.replace(/^#/, ''));
       if (Number.isInteger(folio) && folio > 0) {
-        consulta = consulta.eq('folio', folio);
+        filtros.push(sql`m.folio = ${folio}`);
       } else {
-        // Los caracteres con significado en el filtro de PostgREST se descartan.
-        const texto = query.q.replace(/[,()%*\\]/g, ' ').trim();
-        if (texto) consulta = consulta.or(`nombre.ilike.%${texto}%,email.ilike.%${texto}%,asunto.ilike.%${texto}%`);
+        const texto = query.q.trim();
+        if (texto) {
+          const patron = `%${texto.replace(/[\\%_]/g, '\\$&')}%`;
+          filtros.push(sql`(m.nombre ilike ${patron} or m.email ilike ${patron} or m.asunto ilike ${patron})`);
+        }
       }
     }
-    if (paginado) consulta = consulta.range((page - 1) * limit, page * limit - 1);
+    const donde = filtros.reduce((a, f) => sql`${a} and ${f}`);
 
-    const { data, error, count } = await consulta;
-    const filas = (data ?? []) as unknown[];
-    return {
-      error,
-      cuerpo: {
-        messages: filas,
-        total:    count ?? filas.length,
-        ...(paginado ? { page, limit } : {})
-      }
-    };
+    try {
+      const [filas, conteo] = await Promise.all([
+        sql`
+          select ${paginado ? CAMPOS_LISTA() : CAMPOS()}
+          from contact_messages m
+          where ${donde}
+          order by m.created_at desc
+          ${paginado ? sql`limit ${limit} offset ${(page - 1) * limit}` : sql``}`,
+        paginado
+          ? sql<{ n: number }[]>`select count(*) as n from contact_messages m where ${donde}`
+          : Promise.resolve(null),
+      ]);
+      return {
+        error: null,
+        cuerpo: {
+          messages: filas,
+          total:    conteo ? conteo[0].n : filas.length,
+          ...(paginado ? { page, limit } : {})
+        }
+      };
+    } catch (error) {
+      return { error, cuerpo: null };
+    }
   }
 
 
@@ -206,22 +220,23 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const esAdmin = isAdminRole(request.user.rol);
 
-    let consulta = supabase
-      .from('contact_messages')
-      .select('id, folio, asunto, nombre, tipo, estado, updated_at', { count: 'exact' })
-      .order('updated_at', { ascending: false })
-      .limit(20);
-    consulta = esAdmin
-      ? consulta.eq('no_leido_admin', true)
-      : consulta.eq('user_id', request.user.sub).eq('no_leido_cliente', true);
+    const donde = esAdmin
+      ? sql`no_leido_admin`
+      : sql`user_id = ${request.user.sub} and no_leido_cliente`;
 
-    const { data, error, count } = await consulta;
-    if (error) {
+    try {
+      const [tickets, [{ n }]] = await Promise.all([
+        sql`
+          select id, folio, asunto, nombre, tipo, estado, updated_at
+          from contact_messages where ${donde}
+          order by updated_at desc limit 20`,
+        sql<{ n: number }[]>`select count(*) as n from contact_messages where ${donde}`,
+      ]);
+      return reply.send({ total: n, tickets });
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al consultar los avisos' });
     }
-
-    return reply.send({ total: count ?? data?.length ?? 0, tickets: data ?? [] });
   });
 
 
@@ -232,14 +247,13 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const esAdmin = isAdminRole(request.user.rol);
 
-    let cambio = supabase
-      .from('contact_messages')
-      .update(esAdmin ? { no_leido_admin: false } : { no_leido_cliente: false })
-      .eq('id', request.params.id);
-    if (!esAdmin) cambio = cambio.eq('user_id', request.user.sub);
-
-    const { data, error } = await cambio.select('id').maybeSingle();
-    if (error) {
+    let data;
+    try {
+      [data] = await filasONada(esAdmin
+        ? sql`update contact_messages set no_leido_admin = false where id = ${request.params.id} returning id`
+        : sql`update contact_messages set no_leido_cliente = false
+              where id = ${request.params.id} and user_id = ${request.user.sub} returning id`);
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al marcar el ticket' });
     }
@@ -256,16 +270,17 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/:id', {
     preHandler: [app.authenticate]
   }, async (request, reply) => {
-    const { data, error } = await supabase
-      .from('contact_messages')
-      .select(CAMPOS)
-      .eq('id', request.params.id)
-      .maybeSingle();
-
-    const ticket = data as { user_id?: string | null } | null;
+    let ticket: { user_id?: string | null } | undefined;
+    try {
+      [ticket] = await filasONada(sql<{ user_id: string | null }[]>`
+        select ${CAMPOS()} from contact_messages m where m.id = ${request.params.id}`);
+    } catch (error) {
+      app.log.error(error);
+      return reply.code(500).send({ error: 'Error al obtener el mensaje' });
+    }
 
     // Un ticket ajeno se responde igual que uno inexistente, para no revelar que existe.
-    if (error || !ticket || (!isAdminRole(request.user.rol) && ticket.user_id !== request.user.sub)) {
+    if (!ticket || (!isAdminRole(request.user.rol) && ticket.user_id !== request.user.sub)) {
       return reply.code(404).send({ error: 'Mensaje no encontrado' });
     }
 
@@ -283,11 +298,8 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   ) {
     const esAdmin = isAdminRole(request.user.rol);
 
-    const { data: mensaje } = await supabase
-      .from('contact_messages')
-      .select('id, folio, nombre, email, user_id, estado')
-      .eq('id', id)
-      .maybeSingle();
+    const [mensaje] = await filasONada(sql<{ id: string; folio: number; nombre: string; email: string; user_id: string | null; estado: string }[]>`
+      select id, folio, nombre, email, user_id, estado from contact_messages where id = ${id}`);
 
     // Un mensaje ajeno se responde igual que uno inexistente, para no revelar que existe.
     if (!mensaje || (!esAdmin && mensaje.user_id !== request.user.sub)) {
@@ -302,50 +314,41 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(409).send({ error: 'El ticket está cerrado. Reábrelo para seguir la conversación.' });
     }
 
-    const { data: autor } = await supabase
-      .from('users')
-      .select('nombre')
-      .eq('id', request.user.sub)
-      .maybeSingle();
+    const [autor] = await sql<{ nombre: string }[]>`select nombre from users where id = ${request.user.sub}`;
 
     const clientRef = claveIdempotencia(request);
 
-    const { error } = await supabase
-      .from('contact_replies')
-      .insert({
-        message_id:   id,
-        autor_id:     request.user.sub,
-        autor_nombre: autor?.nombre ?? request.user.email,
-        es_admin:     esAdmin,
-        texto,
-        client_ref:   clientRef
+    // La respuesta y el cambio de estado del ticket en una transacción: antes eran dos
+    // llamadas y un fallo en la segunda dejaba la respuesta guardada con el estado viejo.
+    try {
+      await sql.begin(async tx => {
+        await tx`
+          insert into contact_replies ${tx({
+            message_id:   id,
+            autor_id:     request.user.sub,
+            autor_nombre: autor?.nombre ?? request.user.email,
+            es_admin:     esAdmin,
+            texto,
+            client_ref:   clientRef
+          })}`;
+        // Si responde el cliente, el ticket vuelve a la bandeja de pendientes.
+        // Se marca como no leído para el otro lado: así le llega el aviso.
+        await tx`
+          update contact_messages set ${tx({
+            estado:     esAdmin ? estadoAdmin : 'ABIERTO',
+            cerrado_at: null,
+            updated_at: new Date(),
+            ...(esAdmin ? { no_leido_cliente: true } : { no_leido_admin: true })
+          })}
+          where id = ${id}`;
       });
-
-    // Reintento: la respuesta ya se guardó (y el correo ya salió) la primera vez.
-    if (esDuplicado(error) && clientRef) {
-      return reply.code(200).send({ message: 'Respuesta enviada', correoEnviado: false, repetida: true });
-    }
-
-    if (error) {
+    } catch (error) {
+      // Reintento: la respuesta ya se guardó (y el correo ya salió) la primera vez.
+      if (esDuplicado(error as { code?: string }) && clientRef) {
+        return reply.code(200).send({ message: 'Respuesta enviada', correoEnviado: false, repetida: true });
+      }
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al guardar la respuesta' });
-    }
-
-    // Si responde el cliente, el ticket vuelve a la bandeja de pendientes.
-    // Se marca como no leído para el otro lado: así le llega el aviso.
-    const { error: estadoError } = await supabase
-      .from('contact_messages')
-      .update({
-        estado:     esAdmin ? estadoAdmin : 'ABIERTO',
-        cerrado_at: null,
-        updated_at: new Date().toISOString(),
-        ...(esAdmin ? { no_leido_cliente: true } : { no_leido_admin: true })
-      })
-      .eq('id', id);
-
-    if (estadoError) {
-      app.log.error(estadoError);
-      return reply.code(500).send({ error: 'Error al actualizar el mensaje' });
     }
 
     let correoEnviado = false;
@@ -401,24 +404,20 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { adminId } = request.body;
 
-    const { data: destino } = await supabase
-      .from('users')
-      .select('rol, activo, nombre, email')
-      .eq('id', adminId)
-      .maybeSingle();
+    const [destino] = await filasONada(sql<{ rol: string; activo: boolean; nombre: string | null; email: string }[]>`
+      select rol, activo, nombre, email from users where id = ${adminId}`);
 
     if (!destino || !isAdminRole(destino.rol) || destino.activo === false) {
       return reply.code(400).send({ error: 'El destinatario debe ser un administrador activo' });
     }
 
-    const { data: mensaje, error } = await supabase
-      .from('contact_messages')
-      .update({ asignado_a: adminId, updated_at: new Date().toISOString() })
-      .eq('id', request.params.id)
-      .select('id, nombre, email')
-      .maybeSingle();
-
-    if (error) {
+    let mensaje: { id: string; nombre: string; email: string } | undefined;
+    try {
+      [mensaje] = await filasONada(sql<{ id: string; nombre: string; email: string }[]>`
+        update contact_messages set asignado_a = ${adminId}, updated_at = now()
+        where id = ${request.params.id}
+        returning id, nombre, email`);
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al asignar el mensaje' });
     }
@@ -458,11 +457,8 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     const { estado, esperado } = request.body;
     const esAdmin = isAdminRole(request.user.rol);
 
-    const { data: ticket } = await supabase
-      .from('contact_messages')
-      .select('id, folio, nombre, email, user_id, estado')
-      .eq('id', request.params.id)
-      .maybeSingle();
+    const [ticket] = await filasONada(sql<{ id: string; folio: number | null; nombre: string; email: string; user_id: string | null; estado: string }[]>`
+      select id, folio, nombre, email, user_id, estado from contact_messages where id = ${request.params.id}`);
 
     if (!ticket || (!esAdmin && ticket.user_id !== request.user.sub)) {
       return reply.code(404).send({ error: 'Mensaje no encontrado' });
@@ -473,22 +469,22 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const terminado = estado === 'CERRADO' || estado === 'RESUELTO';
-    const ahora = new Date().toISOString();
+    const ahora = new Date();
 
-    let cambio = supabase
-      .from('contact_messages')
-      .update({
-        estado,
-        cerrado_at: terminado ? ahora : null,
-        updated_at: ahora,
-        ...(esAdmin ? { no_leido_cliente: ticket.user_id !== null } : { no_leido_admin: true })
-      })
-      .eq('id', request.params.id);
-    if (esperado) cambio = cambio.eq('estado', esperado);
-
-    const { data: actualizado, error } = await cambio.select('id, folio, estado').maybeSingle();
-
-    if (error) {
+    // UPDATE condicionado al estado que veía quien hace el cambio (concurrencia optimista).
+    let actualizado;
+    try {
+      [actualizado] = await sql`
+        update contact_messages set ${sql({
+          estado,
+          cerrado_at: terminado ? ahora : null,
+          updated_at: ahora,
+          ...(esAdmin ? { no_leido_cliente: ticket.user_id !== null } : { no_leido_admin: true })
+        })}
+        where id = ${request.params.id}
+          ${esperado ? sql`and estado = ${esperado}` : sql``}
+        returning id, folio, estado`;
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al actualizar el ticket' });
     }
@@ -521,14 +517,13 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       }
     }
   }, async (request, reply) => {
-    const { data: ticket, error } = await supabase
-      .from('contact_messages')
-      .update({ prioridad: request.body.prioridad, updated_at: new Date().toISOString() })
-      .eq('id', request.params.id)
-      .select('id, folio, prioridad')
-      .maybeSingle();
-
-    if (error) {
+    let ticket;
+    try {
+      [ticket] = await filasONada(sql`
+        update contact_messages set prioridad = ${request.body.prioridad}, updated_at = now()
+        where id = ${request.params.id}
+        returning id, folio, prioridad`);
+    } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al actualizar el ticket' });
     }
@@ -544,12 +539,16 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   app.delete<{ Params: { id: string } }>('/:id', {
     preHandler: [app.authenticate, soloAdmin]
   }, async (request, reply) => {
-    const { error } = await supabase
-      .from('contact_messages')
-      .delete()
-      .eq('id', request.params.id);
+    let borrado;
+    try {
+      // Las respuestas se borran con el ticket (on delete cascade).
+      [borrado] = await filasONada(sql`delete from contact_messages where id = ${request.params.id} returning id`);
+    } catch (error) {
+      app.log.error(error);
+      return reply.code(500).send({ error: 'Error al eliminar el mensaje' });
+    }
 
-    if (error) {
+    if (!borrado) {
       return reply.code(404).send({ error: 'Mensaje no encontrado' });
     }
 
