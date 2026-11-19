@@ -13,6 +13,7 @@ import { ordersRoutes }   from './routes/orders/index';
 import { statsRoutes }    from './routes/stats/index';
 import { auditRoutes }    from './routes/audit/index';
 import { uploadRoutes }   from './routes/uploads/index';
+import { skonditRoutes }  from './routes/skondit/index';
 
 export async function buildApp() {
   const prod = process.env['NODE_ENV'] === 'production';
@@ -38,6 +39,7 @@ export async function buildApp() {
   await app.register(statsRoutes,   { prefix: '/api/stats'   });
   await app.register(auditRoutes,   { prefix: '/api/audit'   });
   await app.register(uploadRoutes,  { prefix: '/api/uploads' });
+  await app.register(skonditRoutes, { prefix: '/api/skondit' });
 
   return app;
 }
