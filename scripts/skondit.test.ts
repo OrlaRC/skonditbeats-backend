@@ -62,3 +62,20 @@ test('now-playing rechaza datos fuera de rango e ignora campos extra', async () 
   assert.equal((await pedir('PUT', '/api/skondit/now-playing', { ...base, id: 2 })).statusCode, 200);
   assert.deepEqual((await bd`select id from now_playing`).map(r => r.id), [1]);
 });
+
+test('CORS: /api/skondit acepta cualquier origen sin credenciales; el resto sigue limitado', async () => {
+  const preflight = (url: string, origin: string) => app.inject({
+    method: 'OPTIONS', url,
+    headers: { origin, 'access-control-request-method': 'GET', 'access-control-request-headers': 'x-skondit-key' },
+  });
+  const tv = await preflight('/api/skondit/now-playing', 'http://localhost:8080');
+  assert.equal(tv.headers['access-control-allow-origin'], 'http://localhost:8080');
+  assert.equal(tv.headers['access-control-allow-credentials'], undefined);
+
+  const web = await preflight('/api/users', 'http://localhost:4200');   // origen permitido (ALLOWED_ORIGINS)
+  assert.equal(web.headers['access-control-allow-origin'], 'http://localhost:4200');
+  assert.equal(web.headers['access-control-allow-credentials'], 'true');
+
+  const ajeno = await preflight('/api/users', 'https://sitio-ajeno.example');
+  assert.equal(ajeno.headers['access-control-allow-origin'], undefined);
+});
