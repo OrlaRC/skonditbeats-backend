@@ -2,6 +2,23 @@ import type { FastifyInstance } from 'fastify';
 import { sql, esFormatoInvalido } from '../../db/sql';
 import { isAdminRole }          from '../../types/index';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
+import { claveIdempotencia, esDuplicado } from '../../plugins/idempotencia';
+
+/** Cuerpo de alta/edición. Antes un precio negativo o un id de beat mal formado llegaban a la base. */
+const ESQUEMA_PACK = {
+  body: {
+    type: 'object',
+    required: ['nombre', 'precio', 'beat_ids'],
+    properties: {
+      nombre:      { type: 'string', minLength: 2, maxLength: 150 },
+      descripcion: { type: ['string', 'null'], maxLength: 1000 },
+      imagen_url:  { type: ['string', 'null'] },
+      precio:      { type: 'number', minimum: 0, maximum: 1000000 },
+      beat_ids:    { type: 'array', minItems: 1, maxItems: 100, uniqueItems: true,
+                     items: { type: 'string', format: 'uuid' } }
+    }
+  }
+} as const;
 
 interface PackBody {
   nombre:      string;
@@ -38,7 +55,7 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
   // Público: lista los paquetes activos con sus beats
   app.get('/', async (_request, reply) => {
     try {
-      const packs = await consultaPacks(sql`where p.activo order by p.created_at desc`);
+      const packs = await consultaPacks(sql`where p.activo order by p.created_at desc, p.nombre`);
       return reply.send({ packs });
     } catch (error) {
       app.log.error(error);
@@ -69,7 +86,8 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
 
   // ─── POST /api/packs ───────────────────────────────────────────────────────
   app.post<{ Body: PackBody }>('/', {
-    preHandler: [app.authenticate]
+    preHandler: [app.authenticate],
+    schema: ESQUEMA_PACK
   }, async (request, reply) => {
     if (!isAdminRole(request.user.rol)) {
       return reply.code(403).send({ error: 'Acceso denegado' });
@@ -87,18 +105,28 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
 
     // El paquete y sus beats en una transacción: o se guarda todo o nada
     // (antes, si fallaba el vínculo, se intentaba borrar a mano el paquete a medias).
+    const clientRef = claveIdempotencia(request);
     let pack: { id: string };
     try {
       pack = await sql.begin(async tx => {
         const [nuevo] = await tx<{ id: string }[]>`
-          insert into packs (nombre, descripcion, imagen_url, precio)
-          values (${nombre}, ${descripcion ?? null}, ${imagen_url ?? null}, ${Number(precio)})
+          insert into packs (nombre, descripcion, imagen_url, precio, client_ref)
+          values (${nombre}, ${descripcion ?? null}, ${imagen_url ?? null}, ${Number(precio)}, ${clientRef})
           returning id`;
         await tx`
           insert into pack_beats ${tx(beat_ids.map(beatId => ({ pack_id: nuevo.id, beat_id: beatId })))}`;
         return nuevo;
       });
     } catch (error) {
+      // Reintento de un alta que sí llegó: se responde el paquete ya creado.
+      if (clientRef && esDuplicado(error as { code?: string })) {
+        const [existente] = await sql<{ id: string }[]>`select id from packs where client_ref = ${clientRef}`;
+        if (existente) return reply.code(200).send({ pack: existente });
+      }
+      // Un beat que no existe viola la llave foránea de pack_beats.
+      if ((error as { code?: string }).code === '23503') {
+        return reply.code(400).send({ error: 'Uno de los beats elegidos ya no existe' });
+      }
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al crear el paquete' });
     }
@@ -117,7 +145,8 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
 
   // ─── PUT /api/packs/:id ────────────────────────────────────────────────────
   app.put<{ Params: Params; Body: PackBody }>('/:id', {
-    preHandler: [app.authenticate]
+    preHandler: [app.authenticate],
+    schema: ESQUEMA_PACK
   }, async (request, reply) => {
     if (!isAdminRole(request.user.rol)) {
       return reply.code(403).send({ error: 'Acceso denegado' });
@@ -150,6 +179,9 @@ export async function packRoutes(app: FastifyInstance): Promise<void> {
         return editado;
       });
     } catch (error) {
+      if ((error as { code?: string }).code === '23503') {
+        return reply.code(400).send({ error: 'Uno de los beats elegidos ya no existe' });
+      }
       if (!esFormatoInvalido(error)) {
         app.log.error(error);
         return reply.code(500).send({ error: 'Error al editar el paquete' });
