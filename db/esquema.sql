@@ -438,3 +438,21 @@ ALTER TABLE ONLY public.pack_intercambios
 
 ALTER TABLE ONLY public.pack_intercambios
     ADD CONSTRAINT pack_intercambios_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+-- ── Sesiones revocables y baja de cuentas (db/migraciones/2026-11-24_sesiones_y_bajas.sql)
+CREATE TABLE public.sesiones (
+    id          uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id     uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    dispositivo text,
+    ip          text,
+    created_at  timestamp with time zone DEFAULT now() NOT NULL,
+    ultimo_uso  timestamp with time zone DEFAULT now() NOT NULL,
+    expira_at   timestamp with time zone NOT NULL,
+    revocada_at timestamp with time zone
+);
+
+CREATE INDEX sesiones_user_activas_idx ON public.sesiones (user_id) WHERE revocada_at IS NULL;
+
+ALTER TABLE public.users ADD COLUMN eliminado_at timestamp with time zone;
+
+ALTER TABLE public.packs ADD COLUMN client_ref uuid UNIQUE;

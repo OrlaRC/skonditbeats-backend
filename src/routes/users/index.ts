@@ -5,6 +5,8 @@ import { isAdminRole, isSuperAdmin, puedeGestionar, UserRole, ROLES_VALIDOS, PER
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
 import { EMAIL }                from '../../schemas/comunes';
+import { revocarSesiones }      from '../../plugins/sesiones';
+import { randomBytes }          from 'node:crypto';
 
 interface CreateUserBody {
   email:       string;
@@ -74,6 +76,7 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
                (select count(*) from order_items oi join orders o on o.id = oi.order_id
                 where o.user_id = u.id and o.status = 'COMPLETADO') as beats_comprados
         from users u
+        where u.eliminado_at is null
         order by u.fecha_registro desc`;
       return reply.send({ users });
     } catch (error) {
@@ -165,7 +168,7 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
     const [data] = await filasONada(sql`
       select id, email, username, nombre, rol, permissions, foto_url, direccion, telefono, edad, activo, fecha_registro
-      from users where id = ${request.params.id}`);
+      from users where id = ${request.params.id} and eliminado_at is null`);
 
     if (!data) {
       return reply.code(404).send({ error: 'Usuario no encontrado' });
@@ -264,6 +267,9 @@ const { id } = request.params;
       return reply.code(500).send({ error: 'Error al actualizar el usuario' });
     }
 
+    // Una cuenta desactivada pierde todas sus sesiones abiertas.
+    if (activo === false) await revocarSesiones(id);
+
     if (rol !== undefined && rol !== actual.rol) {
       await registrarAudit(app, {
         user_id: request.user.sub,
@@ -275,6 +281,77 @@ const { id } = request.params;
     }
 
     return reply.send({ user });
+  });
+
+
+  // ─── DELETE /api/users/:id ─────────────────────────────────────────────────
+  // Baja definitiva. Si la cuenta no tiene compras se borra la fila; si tiene, se
+  // anonimiza (sin nombre, correo, teléfono, foto ni contraseña utilizable) para que el
+  // historial de ventas siga cuadrando. En ambos casos se cierran todas sus sesiones y
+  // sus tickets quedan sin datos personales. Desactivar (PUT activo=false) sigue
+  // existiendo para suspensiones temporales.
+  app.delete<{ Params: { id: string } }>('/:id', async (request, reply) => {
+    const { id } = request.params;
+
+    if (id === request.user.sub) {
+      return reply.code(400).send({ error: 'No puedes eliminar tu propia cuenta desde este módulo' });
+    }
+
+    const [actual] = await filasONada(sql<{ nombre: string; email: string; rol: UserRole; activo: boolean }[]>`
+      select nombre, email, rol, activo from users where id = ${id} and eliminado_at is null`);
+    if (!actual) {
+      return reply.code(404).send({ error: 'Usuario no encontrado' });
+    }
+
+    if (!puedeGestionar(request.user.rol, actual.rol)) {
+      return reply.code(403).send({ error: SOLO_SUPER });
+    }
+    if (isSuperAdmin(actual.rol) && actual.activo && (await superAdminsActivos()) <= 1) {
+      return reply.code(400).send({ error: 'Debe quedar al menos un super administrador activo' });
+    }
+
+    let modo: 'borrada' | 'anonimizada';
+    try {
+      modo = await sql.begin(async tx => {
+        const [{ compras }] = await tx<{ compras: number }[]>`
+          select (select count(*) from orders where user_id = ${id})
+               + (select count(*) from pack_intercambios where user_id = ${id}) as compras`;
+
+        await tx`update contact_messages set nombre = 'Cuenta eliminada', email = 'eliminado@skondit.invalid'
+                 where user_id = ${id}`;
+
+        if (Number(compras) === 0) {
+          // otp_codes y sesiones se borran en cascada; tickets y respuestas quedan con user_id null.
+          await tx`delete from users where id = ${id}`;
+          return 'borrada';
+        }
+
+        const inservible = await bcrypt.hash(randomBytes(32).toString('hex'), 4);
+        await tx`
+          update users set
+            email = ${'eliminado+' + id + '@skondit.invalid'}, nombre = 'Cuenta eliminada',
+            username = null, telefono = null, direccion = null, edad = null, foto_url = null,
+            password = ${inservible}, permissions = '{}', activo = false,
+            eliminado_at = now(), updated_at = now()
+          where id = ${id}`;
+        await tx`delete from otp_codes where user_id = ${id}`;
+        await tx`update sesiones set revocada_at = now() where user_id = ${id} and revocada_at is null`;
+        return 'anonimizada';
+      });
+    } catch (error) {
+      app.log.error(error);
+      return reply.code(500).send({ error: 'Error al eliminar la cuenta' });
+    }
+
+    await registrarAudit(app, {
+      user_id: request.user.sub,
+      email:   request.user.email,
+      accion:  'BAJA_DEFINITIVA_USUARIO',
+      detalle: `Eliminó la cuenta de ${actual.nombre} (${actual.email}); ${modo === 'borrada' ? 'sin compras, se borró' : 'tenía compras, se anonimizó'}`,
+      ip:      ipDeRequest(request)
+    });
+
+    return reply.send({ modo });
   });
 
 
@@ -311,6 +388,7 @@ const { id } = request.params;
 
     try {
       await sql`update users set password = ${newHash}, updated_at = now() where id = ${request.params.id}`;
+      await revocarSesiones(request.params.id);
     } catch (error) {
       app.log.error(error);
       return reply.code(500).send({ error: 'Error al cambiar la contraseña' });

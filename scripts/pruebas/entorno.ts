@@ -36,7 +36,7 @@ type App = Awaited<ReturnType<typeof import('../../src/app').buildApp>>;
 export let app: App;
 export let bd: typeof import('../../src/db/sql').sql;
 
-const TABLAS = ['pack_intercambios', 'order_items', 'orders', 'pack_beats', 'packs', 'contact_replies',
+const TABLAS = ['sesiones', 'pack_intercambios', 'order_items', 'orders', 'pack_beats', 'packs', 'contact_replies',
   'contact_messages', 'otp_codes', 'bitacora', 'now_playing', 'beats', 'users'];
 
 /** Crea skondit_test si no existe, recrea el esquema y levanta la app. Llamar en before(). */
@@ -63,7 +63,9 @@ export async function iniciar(): Promise<void> {
 function conexion(url: string) {
   const u = new URL(url);
   return { host: u.hostname, port: Number(u.port || 5432), username: decodeURIComponent(u.username),
-    password: decodeURIComponent(u.password) || undefined, database: u.pathname.slice(1) };
+    password: decodeURIComponent(u.password) || undefined, database: u.pathname.slice(1),
+    // Una base remota (p. ej. Neon) exige TLS; la de la PC no.
+    ssl: /^(127\.0\.0\.1|localhost)$/.test(u.hostname) ? false : ('require' as const) };
 }
 
 /** Cierra la app y la conexión. Llamar en after(). */

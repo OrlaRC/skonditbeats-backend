@@ -3,6 +3,7 @@ import bcrypt                   from 'bcryptjs';
 import { sql, definidos }       from '../../db/sql';
 import { registrarAudit, ipDeRequest } from '../../plugins/audit';
 import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/password';
+import { revocarSesiones } from '../../plugins/sesiones';
 
 interface ProfileBody {
   nombre?:    string;
@@ -104,6 +105,8 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
     const newHash = await bcrypt.hash(password_nueva, 12);
 
     await sql`update users set password = ${newHash}, updated_at = now() where id = ${request.user.sub}`;
+    // Quien tuviera la contraseña anterior pierde las sesiones que haya abierto con ella.
+    const cerradas = await revocarSesiones(request.user.sub, request.user.jti ?? null);
 
     await registrarAudit(app, {
       user_id: request.user.sub,
@@ -113,7 +116,7 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
       ip:      ipDeRequest(request)
     });
 
-    return reply.send({ message: 'Contraseña actualizada correctamente' });
+    return reply.send({ message: 'Contraseña actualizada correctamente', sesiones_cerradas: cerradas });
   });
 
 

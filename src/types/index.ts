@@ -109,6 +109,7 @@ export interface JwtPayload {
   sub: string;      // user id
   email: string;
   rol: UserRole;
+  jti?: string;     // id de la sesión (tabla sesiones)
   iat?: number;
   exp?: number;
 }

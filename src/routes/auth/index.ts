@@ -8,6 +8,7 @@ import { validarPoliticaPassword, DESCRIPCION_POLITICA } from '../../plugins/pas
 import type { JwtPayload }       from '../../types/index';
 import { isAdminRole }           from '../../types/index';
 import { EMAIL }                 from '../../schemas/comunes';
+import { abrirSesion }           from '../../plugins/sesiones';
 
 /** Inicio de sesión con Google desde la app móvil: vuelve a skonditbeats://login?... */
 const ORIGEN_MOVIL  = 'movil';
@@ -119,8 +120,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       rol:   user.rol
     };
 
-    const token = app.jwt.sign(payload);
-    return reply.code(201).send({ token, user });
+    const sesion = await abrirSesion(app, request, payload);
+    return reply.code(201).send({ ...sesion, user });
   });
 
 
@@ -221,7 +222,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       };
 
       return reply.send({
-        token: app.jwt.sign(payloadAdmin),
+        ...(await abrirSesion(app, request, payloadAdmin)),
         user:  {
           id:       user.id,
           email:    user.email,
@@ -304,7 +305,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       rol:   user.rol
     };
 
-    const token = app.jwt.sign(payload);
+    const sesion = await abrirSesion(app, request, payload);
 
     await registrarAudit(app, {
       user_id: user.id,
@@ -314,7 +315,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       ip:      ipDeRequest(request)
     });
 
-    return reply.send({ token, user });
+    return reply.send({ ...sesion, user });
   });
 
 
@@ -322,6 +323,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/logout', {
     preHandler: [app.authenticate]
   }, async (request, reply) => {
+    // El token de este dispositivo deja de servir de inmediato.
+    if (request.user.jti) {
+      await sql`update sesiones set revocada_at = now()
+                where id = ${request.user.jti} and user_id = ${request.user.sub} and revocada_at is null`;
+    }
+
     await registrarAudit(app, {
       user_id: request.user.sub,
       email:   request.user.email,
