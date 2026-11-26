@@ -36,7 +36,7 @@ type App = Awaited<ReturnType<typeof import('../../src/app').buildApp>>;
 export let app: App;
 export let bd: typeof import('../../src/db/sql').sql;
 
-const TABLAS = ['sesiones', 'pack_intercambios', 'order_items', 'orders', 'pack_beats', 'packs', 'contact_replies',
+const TABLAS = ['tv_reproduccion', 'tv_dispositivos', 'sesiones', 'pack_intercambios', 'order_items', 'orders', 'pack_beats', 'packs', 'contact_replies',
   'contact_messages', 'otp_codes', 'bitacora', 'now_playing', 'beats', 'users'];
 
 /** Crea skondit_test si no existe, recrea el esquema y levanta la app. Llamar en before(). */

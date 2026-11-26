@@ -2,7 +2,7 @@ import cors from '@fastify/cors';
 import type { FastifyInstance } from 'fastify';
 
 const METODOS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
-const CABECERAS = ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Skondit-Key'];
+const CABECERAS = ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Skondit-Key', 'X-Tv-Token'];
 
 export async function registerCors(app: FastifyInstance): Promise<void> {
   const rawOrigins = process.env['ALLOWED_ORIGINS'] ?? 'http://localhost:4200';
@@ -16,6 +16,12 @@ export async function registerCors(app: FastifyInstance): Promise<void> {
       // cualquiera, sin credenciales.
       if ((request.url ?? '').startsWith('/api/skondit/')) {
         return cb(null, { origin: true, credentials: false, methods: ['GET', 'PUT', 'OPTIONS'], allowedHeaders: CABECERAS });
+      }
+      // /api/tv: la PWA de la TV se autoriza con su propio token (X-Tv-Token) y el
+      // teléfono con su JWT en Authorization; ninguno usa cookies, así que tampoco hace
+      // falta limitar el origen (sin credenciales, otro sitio no puede usar la sesión).
+      if ((request.url ?? '').startsWith('/api/tv/')) {
+        return cb(null, { origin: true, credentials: false, methods: METODOS, allowedHeaders: CABECERAS });
       }
       const origin = request.headers.origin;
       if (!origin || origins.has(origin)) {

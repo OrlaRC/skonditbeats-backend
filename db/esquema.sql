@@ -456,3 +456,38 @@ CREATE INDEX sesiones_user_activas_idx ON public.sesiones (user_id) WHERE revoca
 ALTER TABLE public.users ADD COLUMN eliminado_at timestamp with time zone;
 
 ALTER TABLE public.packs ADD COLUMN client_ref uuid UNIQUE;
+
+-- ── Smart TV vinculada a una cuenta (db/migraciones/2026-11-25_smart_tv.sql)
+CREATE TABLE IF NOT EXISTS public.tv_dispositivos (
+    id               uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    token_hash       text NOT NULL UNIQUE,
+    nombre           text NOT NULL DEFAULT 'Smart TV',
+    codigo           text,
+    codigo_expira_at timestamp with time zone,
+    user_id          uuid REFERENCES public.users(id) ON DELETE CASCADE,
+    created_at       timestamp with time zone DEFAULT now() NOT NULL,
+    vinculado_at     timestamp with time zone,
+    ultimo_contacto  timestamp with time zone,
+    revocado_at      timestamp with time zone,
+    CONSTRAINT tv_codigo_formato CHECK (codigo IS NULL OR codigo ~ '^[0-9]{6}$')
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS tv_codigo_pendiente_idx
+    ON public.tv_dispositivos (codigo) WHERE user_id IS NULL AND revocado_at IS NULL;
+CREATE INDEX IF NOT EXISTS tv_user_idx
+    ON public.tv_dispositivos (user_id) WHERE revocado_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS public.tv_reproduccion (
+    user_id         uuid PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+    beat_id         uuid REFERENCES public.beats(id) ON DELETE SET NULL,
+    position_sec    integer NOT NULL DEFAULT 0 CHECK (position_sec >= 0),
+    duration_sec    integer NOT NULL DEFAULT 0 CHECK (duration_sec >= 0),
+    playing         boolean NOT NULL DEFAULT false,
+    destino         text NOT NULL DEFAULT 'app' CHECK (destino IN ('app', 'tv')),
+    volumen         smallint NOT NULL DEFAULT 100 CHECK (volumen BETWEEN 0 AND 100),
+    comando         bigint NOT NULL DEFAULT 0,
+    tv_position_sec integer,
+    tv_playing      boolean,
+    tv_reportado_at timestamp with time zone,
+    updated_at      timestamp with time zone DEFAULT now() NOT NULL
+);

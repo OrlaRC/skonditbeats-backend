@@ -15,6 +15,7 @@ import { auditRoutes }    from './routes/audit/index';
 import { uploadRoutes }   from './routes/uploads/index';
 import { skonditRoutes }  from './routes/skondit/index';
 import { sesionesRoutes } from './routes/sesiones/index';
+import { tvRoutes }       from './routes/tv/index';
 
 export async function buildApp() {
   const prod = process.env['NODE_ENV'] === 'production';
@@ -58,6 +59,7 @@ export async function buildApp() {
   await app.register(uploadRoutes,  { prefix: '/api/uploads' });
   await app.register(skonditRoutes, { prefix: '/api/skondit' });
   await app.register(sesionesRoutes, { prefix: '/api/sesiones' });
+  await app.register(tvRoutes,      { prefix: '/api/tv'      });
 
   return app;
 }
